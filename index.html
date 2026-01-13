@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Industrial CT Viewer</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/tiff.js@latest/tiff.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Industrial CT Viewer</h1>
+            <div class="controls">
+                <button id="openBtn" title="Open Images">📁 Open</button>
+                <button id="zoomInBtn" title="Zoom In">🔍+</button>
+                <button id="zoomOutBtn" title="Zoom Out">🔍-</button>
+                <button id="resetBtn" title="Reset View">↺ Reset</button>
+                <button id="roiBtn" title="Set range from region" disabled>☐ ROI</button>
+                <button id="crosshairBtn" title="Toggle crosshairs" disabled class="active">+ Crosshair</button>
+                <button id="fullscreenBtn" title="Fullscreen">⛶ Fullscreen</button>
+            </div>
+        </header>
+
+        <div class="ct-controls" id="ctControls" style="display: none;">
+            <div class="control-group">
+                <label for="contrastSlider">Contrast:</label>
+                <input type="range" id="contrastSlider" min="0.5" max="2.0" step="0.1" value="1.0">
+                <span id="contrastValue">1.0</span>
+            </div>
+            <div class="control-group">
+                <label for="brightnessSlider">Brightness:</label>
+                <input type="range" id="brightnessSlider" min="-100" max="100" step="5" value="0">
+                <span id="brightnessValue">0</span>
+            </div>
+            <div class="control-group" id="sliceControls">
+                <label>Slices:</label>
+                <span id="sliceIndicatorXY" class="slice-indicator">XY: 0/0</span>
+                <span id="sliceIndicatorXZ" class="slice-indicator">XZ: 0/0</span>
+                <span id="sliceIndicatorYZ" class="slice-indicator">YZ: 0/0</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="viewer-container" id="dropZone">
+                <div class="image-wrapper" id="imageWrapper">
+                    <!-- Standard 2D view -->
+                    <div id="standard2DView" class="standard-view">
+                        <img id="mainImage" src="" alt="No image loaded">
+                        <div class="placeholder" id="placeholder">
+                            <p>Drop images here or click "Open" to select files</p>
+                            <p class="hint">Supports 2D: JPG, PNG, TIFF | 3D: RAW+JSON, RAW+volumeinfo</p>
+                        </div>
+                    </div>
+
+                    <!-- CT 3D view (2x2 grid) -->
+                    <div id="ct3DView" class="ct-view" style="display: none;">
+                        <div class="viewport-container">
+                            <canvas id="canvasXY" class="viewport-canvas"></canvas>
+                        </div>
+                        <div class="viewport-container">
+                            <canvas id="canvasXZ" class="viewport-canvas"></canvas>
+                        </div>
+                        <div class="viewport-container">
+                            <canvas id="canvasYZ" class="viewport-canvas"></canvas>
+                        </div>
+                        <div class="viewport-container viewport-3d">
+                            <div class="placeholder-3d">
+                                <p>3D Rendering</p>
+                                <p class="hint">Coming soon...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="navigation">
+                    <button id="prevBtn" disabled>← Previous</button>
+                    <span id="imageCounter">0 / 0</span>
+                    <button id="nextBtn" disabled>Next →</button>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <h3>Images</h3>
+                <div id="thumbnails" class="thumbnails"></div>
+            </div>
+        </div>
+
+        <div class="info-bar">
+            <span id="fileName">No file loaded</span>
+            <span id="imageInfo"></span>
+            <span id="zoomLevel">100%</span>
+        </div>
+    </div>
+
+    <input type="file" id="fileInput" multiple accept="image/*,.raw,.json,.tiff,.tif,.volumeinfo" style="display: none;">
+
+    <!-- JavaScript modules -->
+    <script src="js/VolumeData.js"></script>
+    <script src="js/ImageProcessor.js"></script>
+    <script src="js/SliceRenderer.js"></script>
+    <script src="js/FileParser.js"></script>
+    <script src="js/CTViewer.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

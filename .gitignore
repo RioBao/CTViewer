@@ -1,0 +1,13 @@
+# Temporary files
+tmpclaude-*
+
+# Claude Code settings
+.claude/
+
+# Large binary test data (keep JSON metadata, ignore raw volumes)
+test-data/*.raw
+test-data/*.volumeinfo
+
+# OS files
+.DS_Store
+Thumbs.db
