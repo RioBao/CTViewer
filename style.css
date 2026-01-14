@@ -352,9 +352,24 @@ button.active:hover {
     pointer-events: none;
 }
 
+/* Maximized single view mode */
+.ct-view.maximized {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+}
+
+.ct-view .hidden-viewport {
+    display: none;
+}
+
+.ct-view .maximized-viewport {
+    grid-column: 1;
+    grid-row: 1;
+}
+
 /* Responsive adjustments for CT view */
 @media (max-width: 1200px) {
-    .ct-view {
+    .ct-view:not(.maximized) {
         grid-template-columns: 1fr;
         grid-template-rows: 1fr 1fr 1fr 1fr;
     }

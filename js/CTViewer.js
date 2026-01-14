@@ -43,6 +43,9 @@ class CTViewer {
 
         // 3D volume renderer
         this.renderer3D = null;
+
+        // Maximized view state (null = grid view, 'xy'|'xz'|'yz'|'3d' = maximized)
+        this.maximizedView = null;
     }
 
     /**
@@ -59,10 +62,19 @@ class CTViewer {
             this.renderer3D = new VolumeRenderer3D(canvas3D);
         }
 
+        // Store canvas references for maximize functionality
+        this.canvases = {
+            xy: canvasXY,
+            xz: canvasXZ,
+            yz: canvasYZ,
+            '3d': canvas3D
+        };
+
         // Set up event listeners for each canvas
         this.setupEventListeners(canvasXY, 'xy');
         this.setupEventListeners(canvasXZ, 'xz');
         this.setupEventListeners(canvasYZ, 'yz');
+        this.setupEventListeners(canvas3D, '3d');
     }
 
     /**
@@ -170,6 +182,14 @@ class CTViewer {
      * Set up event listeners for a canvas
      */
     setupEventListeners(canvas, axis) {
+        if (!canvas) return;
+
+        // Double-click to toggle maximize/restore view
+        canvas.addEventListener('dblclick', (e) => this.toggleMaximizeView(axis));
+
+        // Skip other events for 3D canvas (handled by VolumeRenderer3D)
+        if (axis === '3d') return;
+
         // Mouse wheel for slice navigation and zoom
         canvas.addEventListener('wheel', (e) => this.handleWheel(e, axis), { passive: false });
 
@@ -948,6 +968,113 @@ class CTViewer {
 
         this.renderAllViews();
         this.notifyRangeChange(this.volumeData.min, this.volumeData.max);
+    }
+
+    // ===== View Maximize Methods =====
+
+    /**
+     * Toggle between maximized single view and 2x2 grid view
+     */
+    toggleMaximizeView(axis) {
+        const ct3DView = document.getElementById('ct3DView');
+        if (!ct3DView) return;
+
+        if (this.maximizedView === axis) {
+            // Already maximized on this view - restore to grid
+            this.restoreGridView();
+        } else {
+            // Maximize this view
+            this.maximizeView(axis);
+        }
+    }
+
+    /**
+     * Maximize a single view to take up the full space
+     */
+    maximizeView(axis) {
+        const ct3DView = document.getElementById('ct3DView');
+        if (!ct3DView) return;
+
+        this.maximizedView = axis;
+
+        // Add maximized class to the container
+        ct3DView.classList.add('maximized');
+
+        // Hide all viewport containers except the one being maximized
+        const viewportContainers = ct3DView.querySelectorAll('.viewport-container');
+        viewportContainers.forEach(container => {
+            const canvas = container.querySelector('canvas');
+            if (canvas) {
+                const canvasAxis = this.getAxisFromCanvas(canvas);
+                if (canvasAxis === axis) {
+                    container.classList.add('maximized-viewport');
+                    container.classList.remove('hidden-viewport');
+                } else {
+                    container.classList.add('hidden-viewport');
+                    container.classList.remove('maximized-viewport');
+                }
+            }
+        });
+
+        // Re-render to update canvas sizes
+        this.debouncedRenderAll();
+
+        // Dispatch event for UI updates
+        document.dispatchEvent(new CustomEvent('viewmaximize', {
+            detail: { axis, maximized: true }
+        }));
+    }
+
+    /**
+     * Restore the 2x2 grid view
+     */
+    restoreGridView() {
+        const ct3DView = document.getElementById('ct3DView');
+        if (!ct3DView) return;
+
+        this.maximizedView = null;
+
+        // Remove maximized class from the container
+        ct3DView.classList.remove('maximized');
+
+        // Show all viewport containers
+        const viewportContainers = ct3DView.querySelectorAll('.viewport-container');
+        viewportContainers.forEach(container => {
+            container.classList.remove('maximized-viewport', 'hidden-viewport');
+        });
+
+        // Re-render to update canvas sizes
+        this.debouncedRenderAll();
+
+        // Dispatch event for UI updates
+        document.dispatchEvent(new CustomEvent('viewmaximize', {
+            detail: { axis: null, maximized: false }
+        }));
+    }
+
+    /**
+     * Get axis identifier from canvas element
+     */
+    getAxisFromCanvas(canvas) {
+        if (canvas === this.canvases.xy) return 'xy';
+        if (canvas === this.canvases.xz) return 'xz';
+        if (canvas === this.canvases.yz) return 'yz';
+        if (canvas === this.canvases['3d']) return '3d';
+        return null;
+    }
+
+    /**
+     * Check if a view is currently maximized
+     */
+    isMaximized() {
+        return this.maximizedView !== null;
+    }
+
+    /**
+     * Get the currently maximized view axis
+     */
+    getMaximizedView() {
+        return this.maximizedView;
     }
 
     /**
