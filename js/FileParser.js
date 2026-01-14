@@ -313,7 +313,8 @@ class FileParser {
 
             reader.onload = async (e) => {
                 try {
-                    const tiff = new Tiff({ buffer: e.target.result });
+                    const arrayBuffer = e.target.result;
+                    const tiff = new Tiff({ buffer: arrayBuffer });
                     const canvas = tiff.toCanvas();
 
                     // Get image data
@@ -323,13 +324,29 @@ class FileParser {
                     // Check if multi-page TIFF
                     const pageCount = tiff.countDirectory();
 
+                    // Extract TIFF metadata for bit depth detection
+                    // TIFF tags: 258 = BitsPerSample, 277 = SamplesPerPixel, 262 = PhotometricInterpretation
+                    const bitsPerSample = tiff.getField(258) || 8;
+                    const samplesPerPixel = tiff.getField(277) || 1;
+                    const photometric = tiff.getField(262); // 0=WhiteIsZero, 1=BlackIsZero, 2=RGB
+
+                    // Determine if grayscale uint16
+                    const isGrayscale = samplesPerPixel === 1 && (photometric === 0 || photometric === 1);
+                    const isUint16 = bitsPerSample === 16;
+
                     resolve({
                         type: pageCount > 1 ? '3d-tiff' : '2d-tiff',
                         width: canvas.width,
                         height: canvas.height,
                         pageCount: pageCount,
                         imageData: imageData,
-                        tiff: tiff
+                        tiff: tiff,
+                        // Raw data info for uint16 grayscale support
+                        rawBuffer: arrayBuffer,
+                        bitsPerSample: bitsPerSample,
+                        samplesPerPixel: samplesPerPixel,
+                        isGrayscale: isGrayscale,
+                        isUint16: isUint16
                     });
 
                 } catch (error) {

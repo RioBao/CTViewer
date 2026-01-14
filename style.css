@@ -132,19 +132,6 @@ button.active:hover {
     color: #555;
 }
 
-.navigation {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 1rem;
-}
-
-#imageCounter {
-    min-width: 80px;
-    text-align: center;
-    color: #999;
-}
 
 .sidebar {
     width: 250px;

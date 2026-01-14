@@ -84,6 +84,9 @@ class CTViewer {
         // Initial render
         this.renderAllViews();
 
+        // Notify initial crosshair position
+        this.notifyCrosshairChange();
+
         return {
             dimensions: volumeData.dimensions,
             dataType: volumeData.dataType,
@@ -338,6 +341,7 @@ class CTViewer {
             // Render all views since crosshair position affects all of them
             this.debouncedRenderAll();
             this.notifySliceChange(axis, newSlice, maxSlice + 1);
+            this.notifyCrosshairChange();
         }
     }
 
@@ -422,6 +426,30 @@ class CTViewer {
     notifyZoomChange(zoom) {
         const event = new CustomEvent('zoomchange', {
             detail: { zoom }
+        });
+        document.dispatchEvent(event);
+    }
+
+    /**
+     * Notify observers of crosshair position change (for pixel value display)
+     */
+    notifyCrosshairChange() {
+        if (!this.crosshairEnabled || !this.volumeData) return;
+
+        const { x, y, z } = this.crosshairPosition;
+        const value = this.volumeData.getValue(
+            Math.floor(x),
+            Math.floor(y),
+            Math.floor(z)
+        );
+
+        const event = new CustomEvent('crosshairchange', {
+            detail: {
+                x: Math.floor(x),
+                y: Math.floor(y),
+                z: Math.floor(z),
+                value: value
+            }
         });
         document.dispatchEvent(event);
     }
@@ -537,6 +565,9 @@ class CTViewer {
         this.notifySliceChange('xy', this.state.slices.xy, nz);
         this.notifySliceChange('xz', this.state.slices.xz, ny);
         this.notifySliceChange('yz', this.state.slices.yz, nx);
+
+        // Notify crosshair position change (for pixel value display)
+        this.notifyCrosshairChange();
 
         // Re-render all views
         this.renderAllViews();

@@ -14,6 +14,16 @@ class ImageViewer {
         this.ctViewer = null;
         this.currentMode = 'standard'; // 'standard' or 'ct'
 
+        // 2D ROI state
+        this.roiMode2D = false;
+        this.roiSelecting2D = false;
+        this.roiStart2D = { x: 0, y: 0 };
+        this.roiEnd2D = { x: 0, y: 0 };
+        this.roiCanvas2D = null;
+
+        // Current TIFF data for uint16 grayscale support
+        this.currentTiffData = null;
+
         this.initElements();
         this.initEventListeners();
         this.initCTComponents();
@@ -26,12 +36,9 @@ class ImageViewer {
         this.fileInput = document.getElementById('fileInput');
         this.dropZone = document.getElementById('dropZone');
         this.thumbnailsContainer = document.getElementById('thumbnails');
-        this.imageCounter = document.getElementById('imageCounter');
         this.fileName = document.getElementById('fileName');
         this.imageInfo = document.getElementById('imageInfo');
         this.zoomLevel = document.getElementById('zoomLevel');
-        this.prevBtn = document.getElementById('prevBtn');
-        this.nextBtn = document.getElementById('nextBtn');
         this.imageWrapper = document.querySelector('.image-wrapper');
 
         // CT view elements
@@ -45,6 +52,8 @@ class ImageViewer {
         this.sliceIndicatorXY = document.getElementById('sliceIndicatorXY');
         this.sliceIndicatorXZ = document.getElementById('sliceIndicatorXZ');
         this.sliceIndicatorYZ = document.getElementById('sliceIndicatorYZ');
+        this.pixelInfoGroup = document.getElementById('pixelInfoGroup');
+        this.pixelInfo = document.getElementById('pixelInfo');
 
         // Canvas elements for medical view
         this.canvasXY = document.getElementById('canvasXY');
@@ -61,8 +70,6 @@ class ImageViewer {
         document.getElementById('fullscreenBtn').addEventListener('click', () => this.toggleFullscreen());
         document.getElementById('roiBtn').addEventListener('click', () => this.toggleRoiMode());
         document.getElementById('crosshairBtn').addEventListener('click', () => this.toggleCrosshairs());
-        this.prevBtn.addEventListener('click', () => this.navigate(-1));
-        this.nextBtn.addEventListener('click', () => this.navigate(1));
 
         // File input
         this.fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
@@ -72,11 +79,11 @@ class ImageViewer {
         this.dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
         this.dropZone.addEventListener('drop', (e) => this.handleDrop(e));
 
-        // Image dragging for panning
-        this.mainImage.addEventListener('mousedown', (e) => this.startDrag(e));
-        this.mainImage.addEventListener('mousemove', (e) => this.drag(e));
-        this.mainImage.addEventListener('mouseup', () => this.endDrag());
-        this.mainImage.addEventListener('mouseleave', () => this.endDrag());
+        // Image dragging for panning (or ROI selection in ROI mode)
+        this.mainImage.addEventListener('mousedown', (e) => this.handleImageMouseDown(e));
+        this.mainImage.addEventListener('mousemove', (e) => this.handleImageMouseMove(e));
+        this.mainImage.addEventListener('mouseup', (e) => this.handleImageMouseUp(e));
+        this.mainImage.addEventListener('mouseleave', (e) => this.handleImageMouseUp(e));
 
         // Keyboard navigation
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
@@ -140,6 +147,13 @@ class ImageViewer {
         this.updateThumbnailActive();
         this.updateNavigation();
 
+        // Clear TIFF data and disable ROI for regular images
+        this.currentTiffData = null;
+        const roiBtn = document.getElementById('roiBtn');
+        roiBtn.disabled = true;
+        roiBtn.classList.remove('active');
+        this.roiMode2D = false;
+
         // Apply current filter settings to the new image
         if (this.currentMode === 'standard') {
             this.apply2DImageFilters();
@@ -174,9 +188,7 @@ class ImageViewer {
     }
 
     updateNavigation() {
-        this.prevBtn.disabled = this.currentIndex === 0;
-        this.nextBtn.disabled = this.currentIndex === this.images.length - 1;
-        this.imageCounter.textContent = `${this.currentIndex + 1} / ${this.images.length}`;
+        // Navigation UI removed - function kept for compatibility
     }
 
     zoom(delta) {
@@ -228,6 +240,41 @@ class ImageViewer {
         this.dropZone.classList.remove('drag-over');
         const files = e.dataTransfer.files;
         this.handleFiles(files);
+    }
+
+    // ===== 2D Image Mouse Handlers =====
+
+    handleImageMouseDown(e) {
+        if (this.roiMode2D) {
+            this.roiSelecting2D = true;
+            this.roiStart2D = { x: e.clientX, y: e.clientY };
+            this.roiEnd2D = { x: e.clientX, y: e.clientY };
+            this.createRoiOverlay2D();
+            this.mainImage.style.cursor = 'crosshair';
+            return;
+        }
+        this.startDrag(e);
+    }
+
+    handleImageMouseMove(e) {
+        if (this.roiSelecting2D) {
+            this.roiEnd2D = { x: e.clientX, y: e.clientY };
+            this.drawRoiRectangle2D();
+            return;
+        }
+        this.drag(e);
+    }
+
+    handleImageMouseUp(e) {
+        if (this.roiSelecting2D) {
+            this.roiSelecting2D = false;
+            this.roiEnd2D = { x: e.clientX, y: e.clientY };
+            this.applyRoiSelection2D();
+            this.removeRoiOverlay2D();
+            this.mainImage.style.cursor = this.roiMode2D ? 'crosshair' : 'grab';
+            return;
+        }
+        this.endDrag();
     }
 
     startDrag(e) {
@@ -298,22 +345,37 @@ class ImageViewer {
     }
 
     /**
-     * Toggle ROI selection mode for CT viewer
+     * Toggle ROI selection mode for CT viewer or 2D images
      */
     toggleRoiMode() {
-        if (this.currentMode !== 'ct' || !this.ctViewer) {
-            return;
-        }
-
-        const isActive = this.ctViewer.toggleRoiMode();
         const roiBtn = document.getElementById('roiBtn');
 
-        if (isActive) {
-            roiBtn.classList.add('active');
-            roiBtn.title = 'ROI mode active - draw rectangle to set range';
-        } else {
-            roiBtn.classList.remove('active');
-            roiBtn.title = 'Set range from region';
+        if (this.currentMode === 'ct' && this.ctViewer) {
+            // CT mode - use CTViewer's ROI handling
+            const isActive = this.ctViewer.toggleRoiMode();
+
+            if (isActive) {
+                roiBtn.classList.add('active');
+                roiBtn.title = 'ROI mode active - draw rectangle to set range';
+            } else {
+                roiBtn.classList.remove('active');
+                roiBtn.title = 'Set range from region';
+            }
+        } else if (this.currentMode === 'standard') {
+            // 2D mode - toggle local ROI state
+            this.roiMode2D = !this.roiMode2D;
+
+            if (this.roiMode2D) {
+                roiBtn.classList.add('active');
+                roiBtn.title = 'ROI mode active - draw rectangle to set range';
+                this.mainImage.style.cursor = 'crosshair';
+            } else {
+                roiBtn.classList.remove('active');
+                roiBtn.title = 'Set range from region';
+                this.mainImage.style.cursor = 'grab';
+                // Clean up any lingering overlay
+                this.removeRoiOverlay2D();
+            }
         }
     }
 
@@ -331,10 +393,230 @@ class ImageViewer {
         if (isEnabled) {
             crosshairBtn.classList.add('active');
             crosshairBtn.title = 'Crosshairs visible - click to hide';
+            this.pixelInfoGroup.style.display = '';
+            // Trigger update to show current pixel value
+            this.ctViewer.notifyCrosshairChange();
         } else {
             crosshairBtn.classList.remove('active');
             crosshairBtn.title = 'Crosshairs hidden - click to show';
+            this.pixelInfoGroup.style.display = 'none';
         }
+    }
+
+    // ===== 2D ROI Methods =====
+
+    /**
+     * Create overlay canvas for 2D ROI selection
+     */
+    createRoiOverlay2D() {
+        if (this.roiCanvas2D) {
+            this.removeRoiOverlay2D();
+        }
+
+        const rect = this.mainImage.getBoundingClientRect();
+
+        this.roiCanvas2D = document.createElement('canvas');
+        this.roiCanvas2D.width = rect.width;
+        this.roiCanvas2D.height = rect.height;
+        this.roiCanvas2D.style.position = 'absolute';
+        this.roiCanvas2D.style.top = this.mainImage.offsetTop + 'px';
+        this.roiCanvas2D.style.left = this.mainImage.offsetLeft + 'px';
+        this.roiCanvas2D.style.pointerEvents = 'none';
+        this.roiCanvas2D.style.zIndex = '10';
+
+        this.mainImage.parentElement.appendChild(this.roiCanvas2D);
+    }
+
+    /**
+     * Draw ROI rectangle on 2D overlay
+     */
+    drawRoiRectangle2D() {
+        if (!this.roiCanvas2D) return;
+
+        const ctx = this.roiCanvas2D.getContext('2d');
+        ctx.clearRect(0, 0, this.roiCanvas2D.width, this.roiCanvas2D.height);
+
+        const rect = this.mainImage.getBoundingClientRect();
+        const x1 = this.roiStart2D.x - rect.left;
+        const y1 = this.roiStart2D.y - rect.top;
+        const x2 = this.roiEnd2D.x - rect.left;
+        const y2 = this.roiEnd2D.y - rect.top;
+
+        const x = Math.min(x1, x2);
+        const y = Math.min(y1, y2);
+        const width = Math.abs(x2 - x1);
+        const height = Math.abs(y2 - y1);
+
+        // Draw rectangle
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.strokeRect(x, y, width, height);
+
+        // Draw semi-transparent fill
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+        ctx.fillRect(x, y, width, height);
+    }
+
+    /**
+     * Remove 2D ROI overlay
+     */
+    removeRoiOverlay2D() {
+        if (this.roiCanvas2D && this.roiCanvas2D.parentElement) {
+            this.roiCanvas2D.parentElement.removeChild(this.roiCanvas2D);
+        }
+        this.roiCanvas2D = null;
+    }
+
+    /**
+     * Apply ROI selection to 2D image - analyze pixels and adjust contrast/brightness
+     * For uint16 grayscale TIFFs, reads raw 16-bit values from the TIFF data
+     */
+    applyRoiSelection2D() {
+        if (!this.mainImage.complete || !this.mainImage.naturalWidth) return;
+        if (!this.currentTiffData) {
+            console.warn('ROI only supported for uint16 grayscale TIFFs');
+            return;
+        }
+
+        const imgRect = this.mainImage.getBoundingClientRect();
+
+        // Get ROI coordinates relative to displayed image
+        const x1 = this.roiStart2D.x - imgRect.left;
+        const y1 = this.roiStart2D.y - imgRect.top;
+        const x2 = this.roiEnd2D.x - imgRect.left;
+        const y2 = this.roiEnd2D.y - imgRect.top;
+
+        // Convert to image coordinates (accounting for display scaling)
+        const scaleX = this.mainImage.naturalWidth / imgRect.width;
+        const scaleY = this.mainImage.naturalHeight / imgRect.height;
+
+        const imgX1 = Math.max(0, Math.floor(Math.min(x1, x2) * scaleX));
+        const imgY1 = Math.max(0, Math.floor(Math.min(y1, y2) * scaleY));
+        const imgX2 = Math.min(this.currentTiffData.width, Math.ceil(Math.max(x1, x2) * scaleX));
+        const imgY2 = Math.min(this.currentTiffData.height, Math.ceil(Math.max(y1, y2) * scaleY));
+
+        if (imgX2 <= imgX1 || imgY2 <= imgY1) {
+            console.warn('ROI selection too small or outside image');
+            return;
+        }
+
+        // Extract raw uint16 values from TIFF data
+        const { min, max } = this.extractUint16RoiValues(imgX1, imgY1, imgX2, imgY2);
+
+        if (min >= max) {
+            console.warn('Could not calculate valid range from ROI');
+            return;
+        }
+
+        console.log(`2D ROI uint16 range: ${min} - ${max}`);
+
+        // For uint16 data displayed as 8-bit, we need to map the ROI range to the display
+        // The TIFF is displayed with some default mapping (likely linear scaling to 8-bit)
+        // We'll calculate what portion of the 16-bit range the ROI represents and adjust accordingly
+
+        // Assume the display maps the full uint16 range (0-65535) to 8-bit (0-255)
+        // The ROI's min/max in the 16-bit space corresponds to some 8-bit values
+        const displayMin = (min / 65535) * 255;
+        const displayMax = (max / 65535) * 255;
+        const displayCenter = (displayMin + displayMax) / 2;
+        const displayRange = displayMax - displayMin;
+
+        console.log(`Display equivalent: ${displayMin.toFixed(1)} - ${displayMax.toFixed(1)}`);
+
+        // Calculate contrast and brightness to map this range to full display
+        // We want displayMin -> 0 and displayMax -> 255
+        const idealContrast = 256 / displayRange;
+        const contrast = Math.max(0.5, Math.min(2.0, idealContrast));
+
+        // After contrast, center moves to: (displayCenter - 128) * contrast + 128
+        const centerAfterContrast = (displayCenter - 128) * contrast + 128;
+
+        // Adjust brightness to bring center to 128
+        let brightness = 1.0;
+        if (centerAfterContrast > 0) {
+            brightness = 128 / centerAfterContrast;
+        }
+        brightness = Math.max(0, Math.min(2.0, brightness));
+
+        const brightnessSliderValue = Math.round((brightness - 1) * 100);
+
+        console.log(`Calculated: contrast=${contrast.toFixed(2)}, brightness=${brightness.toFixed(2)} (slider: ${brightnessSliderValue})`);
+
+        // Update sliders
+        this.contrastSlider.value = contrast.toFixed(1);
+        this.contrastValue.textContent = contrast.toFixed(1);
+        this.brightnessSlider.value = brightnessSliderValue;
+        this.brightnessValue.textContent = brightnessSliderValue;
+
+        // Apply filters
+        this.apply2DImageFilters();
+    }
+
+    /**
+     * Extract raw uint16 values from TIFF buffer for the specified ROI region
+     */
+    extractUint16RoiValues(x1, y1, x2, y2) {
+        if (!this.currentTiffData || !this.currentTiffData.tiff) {
+            return { min: 0, max: 0 };
+        }
+
+        const tiff = this.currentTiffData.tiff;
+        const width = this.currentTiffData.width;
+        const height = this.currentTiffData.height;
+
+        // Get TIFF structure info
+        // Tag 273: StripOffsets, Tag 278: RowsPerStrip, Tag 279: StripByteCounts
+        const stripOffsets = tiff.getField(273);
+        const rowsPerStrip = tiff.getField(278) || height;
+        const compression = tiff.getField(259) || 1; // 1 = no compression
+
+        if (compression !== 1) {
+            console.warn('Compressed TIFFs not supported for ROI, compression:', compression);
+            return { min: 0, max: 0 };
+        }
+
+        if (!stripOffsets) {
+            console.warn('Could not find strip offsets in TIFF');
+            return { min: 0, max: 0 };
+        }
+
+        const buffer = this.currentTiffData.rawBuffer;
+        const dataView = new DataView(buffer);
+
+        // Detect endianness from TIFF header
+        const byteOrder = dataView.getUint16(0, false);
+        const littleEndian = (byteOrder === 0x4949); // 'II' = little endian
+
+        let min = 65535;
+        let max = 0;
+
+        // Convert stripOffsets to array if it's a single value
+        const offsets = Array.isArray(stripOffsets) ? stripOffsets : [stripOffsets];
+
+        // Iterate through the ROI region
+        for (let y = y1; y < y2; y++) {
+            // Find which strip this row belongs to
+            const stripIndex = Math.floor(y / rowsPerStrip);
+            const rowInStrip = y % rowsPerStrip;
+
+            if (stripIndex >= offsets.length) continue;
+
+            const stripOffset = offsets[stripIndex];
+            const rowOffset = stripOffset + (rowInStrip * width * 2); // 2 bytes per pixel
+
+            for (let x = x1; x < x2; x++) {
+                const pixelOffset = rowOffset + (x * 2);
+
+                if (pixelOffset + 2 <= buffer.byteLength) {
+                    const value = dataView.getUint16(pixelOffset, littleEndian);
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+            }
+        }
+
+        return { min, max };
     }
 
     // ===== CT Imaging Methods =====
@@ -391,6 +673,14 @@ class ImageViewer {
         // Listen for zoom change events
         document.addEventListener('zoomchange', (e) => {
             this.zoomLevel.textContent = `${Math.round(e.detail.zoom * 100)}%`;
+        });
+
+        // Listen for crosshair position change events
+        document.addEventListener('crosshairchange', (e) => {
+            const { x, y, z, value } = e.detail;
+            if (this.pixelInfo) {
+                this.pixelInfo.textContent = `X: ${x}, Y: ${y}, Z: ${z} = ${value}`;
+            }
         });
     }
 
@@ -451,8 +741,24 @@ class ImageViewer {
                 this.mainImage.classList.add('active');
                 this.placeholder.style.display = 'none';
                 this.fileName.textContent = fileGroup.name;
+
+                // Store TIFF data for uint16 grayscale ROI support
+                if (tiffData.isGrayscale && tiffData.isUint16) {
+                    this.currentTiffData = tiffData;
+                    // Enable ROI button for uint16 grayscale
+                    const roiBtn = document.getElementById('roiBtn');
+                    roiBtn.disabled = false;
+                    console.log(`Loaded uint16 grayscale TIFF: ${tiffData.width}x${tiffData.height}, ${tiffData.bitsPerSample} bits`);
+                } else {
+                    this.currentTiffData = null;
+                    // Disable ROI button for non-grayscale images
+                    const roiBtn = document.getElementById('roiBtn');
+                    roiBtn.disabled = true;
+                    console.log(`Loaded TIFF: ${tiffData.width}x${tiffData.height}, ${tiffData.bitsPerSample} bits, samples: ${tiffData.samplesPerPixel} (ROI disabled)`);
+                }
             } else {
                 // TODO: Handle multi-page TIFF as 3D volume
+                this.currentTiffData = null;
                 alert('Multi-page TIFF as 3D volume not yet implemented');
             }
 
@@ -476,16 +782,20 @@ class ImageViewer {
             sliceControls.style.display = 'none';
         }
 
-        // Disable ROI mode and crosshairs (only work in CT mode)
+        // Disable ROI button by default in 2D mode (will be enabled for uint16 grayscale TIFFs)
+        // Disable crosshairs (only work in CT mode)
         const roiBtn = document.getElementById('roiBtn');
-        roiBtn.disabled = true;
+        roiBtn.disabled = true;  // Will be enabled by loadTIFF for uint16 grayscale
         roiBtn.classList.remove('active');
+        this.roiMode2D = false;
+        this.currentTiffData = null;  // Clear TIFF data
         if (this.ctViewer && this.ctViewer.isRoiMode()) {
             this.ctViewer.toggleRoiMode();
         }
 
         const crosshairBtn = document.getElementById('crosshairBtn');
         crosshairBtn.disabled = true;
+        this.pixelInfoGroup.style.display = 'none';
 
         // Apply current filter settings to 2D image
         this.apply2DImageFilters();
@@ -505,6 +815,10 @@ class ImageViewer {
         this.ct3DView.style.display = 'grid';
         this.ctControls.style.display = 'flex';
 
+        // Reset 2D ROI state when switching to CT mode
+        this.roiMode2D = false;
+        this.removeRoiOverlay2D();
+
         // Show slice controls for 3D mode
         const sliceControls = document.getElementById('sliceControls');
         if (sliceControls) {
@@ -514,14 +828,17 @@ class ImageViewer {
         // Enable ROI and crosshair buttons for CT mode
         const roiBtn = document.getElementById('roiBtn');
         roiBtn.disabled = false;
+        roiBtn.classList.remove('active');
 
         const crosshairBtn = document.getElementById('crosshairBtn');
         crosshairBtn.disabled = false;
         // Set initial state based on CTViewer
         if (this.ctViewer && this.ctViewer.isCrosshairEnabled()) {
             crosshairBtn.classList.add('active');
+            this.pixelInfoGroup.style.display = '';
         } else {
             crosshairBtn.classList.remove('active');
+            this.pixelInfoGroup.style.display = 'none';
         }
 
         // Update zoom controls to work with CT viewer
