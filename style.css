@@ -259,6 +259,20 @@ button.active:hover {
     border-radius: 3px;
 }
 
+.control-group select {
+    background: #3a3a3a;
+    color: #ccc;
+    border: 1px solid #4a4a4a;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.control-group select:hover {
+    background: #4a4a4a;
+}
+
 /* Standard 2D View */
 .standard-view {
     width: 100%;

@@ -40,16 +40,24 @@ class CTViewer {
 
         // Debounce timer for rendering
         this.renderTimer = null;
+
+        // 3D volume renderer
+        this.renderer3D = null;
     }
 
     /**
      * Initialize the medical viewer with canvas elements
      */
-    initialize(canvasXY, canvasXZ, canvasYZ) {
+    initialize(canvasXY, canvasXZ, canvasYZ, canvas3D) {
         // Create slice renderers
         this.renderers.xy = new SliceRenderer(canvasXY, 'Axial (XY)');
         this.renderers.xz = new SliceRenderer(canvasXZ, 'Coronal (XZ)');
         this.renderers.yz = new SliceRenderer(canvasYZ, 'Sagittal (YZ)');
+
+        // Create 3D renderer if canvas provided
+        if (canvas3D) {
+            this.renderer3D = new VolumeRenderer3D(canvas3D);
+        }
 
         // Set up event listeners for each canvas
         this.setupEventListeners(canvasXY, 'xy');
@@ -80,6 +88,11 @@ class CTViewer {
         Object.values(this.renderers).forEach(renderer => {
             renderer.setDataRange(volumeData.min, volumeData.max);
         });
+
+        // Load into 3D renderer
+        if (this.renderer3D) {
+            this.renderer3D.loadVolume(volumeData);
+        }
 
         // Initial render
         this.renderAllViews();

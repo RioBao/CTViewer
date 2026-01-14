@@ -43,6 +43,14 @@
                 <label>Pixel:</label>
                 <span id="pixelInfo" class="slice-indicator">X: 0, Y: 0, Z: 0 = 0</span>
             </div>
+            <div class="control-group" id="quality3DGroup">
+                <label for="quality3DSelect">3D Quality:</label>
+                <select id="quality3DSelect">
+                    <option value="low">Low (Fast)</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High (Slow)</option>
+                </select>
+            </div>
         </div>
 
         <div class="main-content">
@@ -69,10 +77,7 @@
                             <canvas id="canvasYZ" class="viewport-canvas"></canvas>
                         </div>
                         <div class="viewport-container viewport-3d">
-                            <div class="placeholder-3d">
-                                <p>3D Rendering</p>
-                                <p class="hint">Coming soon...</p>
-                            </div>
+                            <canvas id="canvas3D" class="viewport-canvas"></canvas>
                         </div>
                     </div>
                 </div>
@@ -99,6 +104,8 @@
     <script src="js/ImageProcessor.js"></script>
     <script src="js/SliceRenderer.js"></script>
     <script src="js/FileParser.js"></script>
+    <script src="js/MIPRaycaster.js"></script>
+    <script src="js/VolumeRenderer3D.js"></script>
     <script src="js/CTViewer.js"></script>
     <script src="script.js"></script>
 </body>

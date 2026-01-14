@@ -59,6 +59,7 @@ class ImageViewer {
         this.canvasXY = document.getElementById('canvasXY');
         this.canvasXZ = document.getElementById('canvasXZ');
         this.canvasYZ = document.getElementById('canvasYZ');
+        this.canvas3D = document.getElementById('canvas3D');
     }
 
     initEventListeners() {
@@ -624,7 +625,7 @@ class ImageViewer {
     initCTComponents() {
         // Initialize CT viewer
         this.ctViewer = new CTViewer();
-        this.ctViewer.initialize(this.canvasXY, this.canvasXZ, this.canvasYZ);
+        this.ctViewer.initialize(this.canvasXY, this.canvasXZ, this.canvasYZ, this.canvas3D);
 
         // Set up CT controls event listeners
         if (this.contrastSlider) {
@@ -653,6 +654,16 @@ class ImageViewer {
                 } else if (this.currentMode === 'standard') {
                     // Apply to 2D image using CSS filters
                     this.apply2DImageFilters();
+                }
+            });
+        }
+
+        // 3D quality selector
+        const quality3DSelect = document.getElementById('quality3DSelect');
+        if (quality3DSelect) {
+            quality3DSelect.addEventListener('change', (e) => {
+                if (this.ctViewer && this.ctViewer.renderer3D) {
+                    this.ctViewer.renderer3D.setQuality(e.target.value);
                 }
             });
         }
