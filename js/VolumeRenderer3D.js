@@ -370,6 +370,15 @@ class VolumeRenderer3D {
     }
 
     /**
+     * Set gamma correction
+     * @param {number} gamma - Gamma value (1.0 = no change, <1 = brighten, >1 = darken)
+     */
+    setGamma(gamma) {
+        this.raycaster.setGamma(gamma);
+        this.renderAtQuality(this.currentQuality);
+    }
+
+    /**
      * Reset camera to default view
      */
     resetCamera() {

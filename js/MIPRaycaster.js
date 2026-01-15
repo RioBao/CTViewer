@@ -11,6 +11,8 @@ class MIPRaycaster {
         // Display range for windowing (defaults to data range)
         this.displayMin = 0;
         this.displayMax = 1;
+        // Gamma correction (1.0 = no change, <1 = brighten, >1 = darken)
+        this.gamma = 1.0;
     }
 
     /**
@@ -36,6 +38,14 @@ class MIPRaycaster {
     setDisplayRange(min, max) {
         this.displayMin = min;
         this.displayMax = max;
+    }
+
+    /**
+     * Set gamma correction
+     * @param {number} gamma - Gamma value (1.0 = no change, <1 = brighten, >1 = darken)
+     */
+    setGamma(gamma) {
+        this.gamma = gamma;
     }
 
     /**
@@ -187,7 +197,10 @@ class MIPRaycaster {
                 } else if (maxValue >= this.displayMax) {
                     normalized = 255;
                 } else {
-                    normalized = Math.floor(((maxValue - this.displayMin) / displayRange) * 255);
+                    // Linear normalization to 0-1, then apply gamma, then scale to 255
+                    let t = (maxValue - this.displayMin) / displayRange;
+                    t = Math.pow(t, this.gamma);
+                    normalized = Math.floor(t * 255);
                 }
 
                 // Write pixel (grayscale)

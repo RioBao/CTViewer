@@ -217,6 +217,21 @@ class ImageViewer {
             });
         }
 
+        // 3D gamma slider
+        const gamma3DSlider = document.getElementById('gamma3DSlider');
+        const gamma3DValue = document.getElementById('gamma3DValue');
+        if (gamma3DSlider) {
+            gamma3DSlider.addEventListener('input', (e) => {
+                const gamma = parseFloat(e.target.value);
+                if (gamma3DValue) {
+                    gamma3DValue.textContent = gamma.toFixed(1);
+                }
+                if (this.ctViewer && this.ctViewer.renderer3D) {
+                    this.ctViewer.renderer3D.setGamma(gamma);
+                }
+            });
+        }
+
         // Listen for slice change events from CT viewer
         document.addEventListener('slicechange', (e) => {
             const { axis, sliceIndex, totalSlices } = e.detail;
