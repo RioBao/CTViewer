@@ -312,8 +312,14 @@ class CTViewer {
 
         if (!this.isDragging) return;
 
-        const dx = e.clientX - this.dragStart.x;
-        const dy = e.clientY - this.dragStart.y;
+        // Scale mouse delta to canvas coordinates
+        const canvas = e.target;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const dx = (e.clientX - this.dragStart.x) * scaleX;
+        const dy = (e.clientY - this.dragStart.y) * scaleY;
 
         this.updatePan(
             this.panStart.x + dx,
@@ -647,15 +653,16 @@ class CTViewer {
         const sliceHeight = renderer.currentHeight;
         if (!sliceWidth || !sliceHeight) return null;
 
-        const displaySize = 512;
-        const scaleX = displaySize / sliceWidth;
-        const scaleY = displaySize / sliceHeight;
+        const canvasWidth = renderer.canvas.width;
+        const canvasHeight = renderer.canvas.height;
+        const scaleX = canvasWidth / sliceWidth;
+        const scaleY = canvasHeight / sliceHeight;
         const baseScale = Math.min(scaleX, scaleY);
 
         const scaledWidth = sliceWidth * baseScale;
         const scaledHeight = sliceHeight * baseScale;
-        const centerX = displaySize / 2;
-        const centerY = displaySize / 2;
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
 
         const zoom = this.state.zoom;
         const pan = this.state.pan;
@@ -681,15 +688,16 @@ class CTViewer {
         const sliceHeight = renderer.currentHeight;
         if (!sliceWidth || !sliceHeight) return null;
 
-        const displaySize = 512;
-        const scaleX = displaySize / sliceWidth;
-        const scaleY = displaySize / sliceHeight;
+        const canvasWidth = renderer.canvas.width;
+        const canvasHeight = renderer.canvas.height;
+        const scaleX = canvasWidth / sliceWidth;
+        const scaleY = canvasHeight / sliceHeight;
         const baseScale = Math.min(scaleX, scaleY);
 
         const scaledWidth = sliceWidth * baseScale;
         const scaledHeight = sliceHeight * baseScale;
-        const centerX = displaySize / 2;
-        const centerY = displaySize / 2;
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
 
         const zoom = this.state.zoom;
         const pan = this.state.pan;
@@ -909,9 +917,9 @@ class CTViewer {
 
         // Reverse the transform: canvas -> image coordinates
         const zoom = this.state.zoom;
-        // Pan is stored in internal canvas coordinates (512x512), scale to displayed coordinates
-        const panScaleX = displayWidth / 512;
-        const panScaleY = displayHeight / 512;
+        // Pan is stored in internal canvas coordinates, scale to displayed coordinates
+        const panScaleX = displayWidth / targetCanvas.width;
+        const panScaleY = displayHeight / targetCanvas.height;
         const panX = this.state.pan.x * panScaleX;
         const panY = this.state.pan.y * panScaleY;
 

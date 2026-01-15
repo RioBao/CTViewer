@@ -7,10 +7,9 @@ class VolumeRenderer3D {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
 
-        // Set canvas size to match display
+        // Set canvas size to match display (will be updated dynamically)
         this.displaySize = 512;
-        this.canvas.width = this.displaySize;
-        this.canvas.height = this.displaySize;
+        this.updateDisplaySize();
 
         // Raycaster
         this.raycaster = new MIPRaycaster();
@@ -88,6 +87,27 @@ class VolumeRenderer3D {
     }
 
     /**
+     * Update display size based on container dimensions
+     */
+    updateDisplaySize() {
+        const container = this.canvas.parentElement;
+        const maxSize = 2048;
+
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            // Use the smaller dimension to maintain square aspect for 3D view
+            const size = Math.min(rect.width, rect.height);
+            this.displaySize = Math.min(Math.floor(size * dpr), maxSize);
+        }
+
+        if (this.canvas.width !== this.displaySize || this.canvas.height !== this.displaySize) {
+            this.canvas.width = this.displaySize;
+            this.canvas.height = this.displaySize;
+        }
+    }
+
+    /**
      * Load volume data for rendering
      */
     loadVolume(volumeData) {
@@ -107,6 +127,7 @@ class VolumeRenderer3D {
      * Draw placeholder when no volume is loaded
      */
     drawPlaceholder() {
+        this.updateDisplaySize();
         this.ctx.fillStyle = '#1a1a1a';
         this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
 
@@ -140,6 +161,9 @@ class VolumeRenderer3D {
         if (!this.volumeLoaded || this.isRendering) return;
 
         this.isRendering = true;
+
+        // Update canvas size based on container
+        this.updateDisplaySize();
 
         // Set up offscreen canvas at render resolution
         this.offscreenCanvas.width = this.renderResolution;

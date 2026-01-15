@@ -52,12 +52,24 @@ class SliceRenderer {
         this.currentWidth = sliceData.width;
         this.currentHeight = sliceData.height;
 
-        // Set canvas to a reasonable display size (512x512 default)
-        // We'll scale the image to fit within this
-        const displaySize = 512;
-        if (this.canvas.width !== displaySize || this.canvas.height !== displaySize) {
-            this.canvas.width = displaySize;
-            this.canvas.height = displaySize;
+        // Size canvas based on container dimensions for best quality
+        // Use container size but cap at a reasonable max for performance
+        const container = this.canvas.parentElement;
+        const maxSize = 2048;
+        let displayWidth = 512;
+        let displayHeight = 512;
+
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            // Use device pixel ratio for crisp rendering on high-DPI displays
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            displayWidth = Math.min(Math.floor(rect.width * dpr), maxSize);
+            displayHeight = Math.min(Math.floor(rect.height * dpr), maxSize);
+        }
+
+        if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
+            this.canvas.width = displayWidth;
+            this.canvas.height = displayHeight;
         }
 
         // Create ImageData
