@@ -22,50 +22,16 @@
             </div>
         </header>
 
-        <div class="ct-controls" id="ctControls" style="display: none;">
-            <div class="control-group">
-                <label for="contrastSlider">Contrast:</label>
-                <input type="range" id="contrastSlider" min="0.5" max="2.0" step="0.1" value="1.0">
-                <span id="contrastValue">1.0</span>
-            </div>
-            <div class="control-group">
-                <label for="brightnessSlider">Brightness:</label>
-                <input type="range" id="brightnessSlider" min="-100" max="100" step="5" value="0">
-                <span id="brightnessValue">0</span>
-            </div>
-            <div class="control-group" id="sliceControls">
-                <label>Slices:</label>
-                <span id="sliceIndicatorXY" class="slice-indicator">XY: 0/0</span>
-                <span id="sliceIndicatorXZ" class="slice-indicator">XZ: 0/0</span>
-                <span id="sliceIndicatorYZ" class="slice-indicator">YZ: 0/0</span>
-            </div>
-            <div class="control-group" id="pixelInfoGroup" style="display: none;">
-                <label>Pixel:</label>
-                <span id="pixelInfo" class="slice-indicator">X: 0, Y: 0, Z: 0 = 0</span>
-            </div>
-            <div class="control-group" id="quality3DGroup">
-                <label for="quality3DSelect">3D Quality:</label>
-                <select id="quality3DSelect">
-                    <option value="low">Low (Fast)</option>
-                    <option value="medium" selected>Medium</option>
-                    <option value="high">High (Slow)</option>
-                </select>
-            </div>
-        </div>
-
         <div class="main-content">
             <div class="viewer-container" id="dropZone">
                 <div class="image-wrapper" id="imageWrapper">
-                    <!-- Standard 2D view -->
-                    <div id="standard2DView" class="standard-view">
-                        <img id="mainImage" src="" alt="No image loaded">
-                        <div class="placeholder" id="placeholder">
-                            <p>Drop images here or click "Open" to select files</p>
-                            <p class="hint">Supports 2D: JPG, PNG, TIFF | 3D: RAW+JSON, RAW+volumeinfo</p>
-                        </div>
+                    <!-- Placeholder shown when no volume loaded -->
+                    <div class="placeholder" id="placeholder">
+                        <p>Drop images here or click "Open" to select files</p>
+                        <p class="hint">Supports 2D: JPG, PNG, TIFF | 3D: RAW+JSON, RAW+volumeinfo</p>
                     </div>
 
-                    <!-- CT 3D view (2x2 grid) -->
+                    <!-- Volume viewer (2x2 grid for 3D, single view for 2D) -->
                     <div id="ct3DView" class="ct-view" style="display: none;">
                         <div class="viewport-container">
                             <canvas id="canvasXY" class="viewport-canvas"></canvas>
@@ -84,9 +50,46 @@
 
             </div>
 
-            <div class="sidebar">
-                <h3>Images</h3>
-                <div id="thumbnails" class="thumbnails"></div>
+            <div class="sidebar" id="ctControls">
+                <div class="sidebar-section" id="sliceControls">
+                    <h4>Slices</h4>
+                    <div class="slice-indicators">
+                        <span id="sliceIndicatorXY" class="slice-indicator">XY: 0/0</span>
+                        <span id="sliceIndicatorXZ" class="slice-indicator">XZ: 0/0</span>
+                        <span id="sliceIndicatorYZ" class="slice-indicator">YZ: 0/0</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-section" id="pixelInfoGroup" style="display: none;">
+                    <h4>Pixel Value</h4>
+                    <span id="pixelInfo" class="slice-indicator">X: 0, Y: 0, Z: 0 = 0</span>
+                </div>
+
+                <div class="sidebar-section">
+                    <h4>Display</h4>
+                    <div class="control-row">
+                        <label for="contrastSlider">Contrast</label>
+                        <input type="range" id="contrastSlider" min="0.1" max="10.0" step="0.1" value="1.0">
+                        <span id="contrastValue">1.0</span>
+                    </div>
+                    <div class="control-row">
+                        <label for="brightnessSlider">Brightness</label>
+                        <input type="range" id="brightnessSlider" min="-200" max="200" step="5" value="0">
+                        <span id="brightnessValue">0</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-section" id="quality3DGroup">
+                    <h4>3D Rendering</h4>
+                    <div class="control-row">
+                        <label for="quality3DSelect">Quality</label>
+                        <select id="quality3DSelect">
+                            <option value="low">Low (Fast)</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="high">High (Slow)</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 

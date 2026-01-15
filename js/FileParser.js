@@ -363,20 +363,188 @@ class FileParser {
     }
 
     /**
-     * Load standard 2D image
-     * @param {File} file
-     * @returns {Promise<string>} Blob URL
+     * Convert a 2D image file to VolumeData
+     * Grayscale images become depth-1 volumes
+     * RGB images become depth-3 volumes (R, G, B as separate z-slices)
+     * @param {File} file - Image file (PNG, JPG, etc.)
+     * @returns {Promise<VolumeData>}
      */
-    async load2DImage(file) {
+    async convertImageToVolume(file) {
         return new Promise((resolve, reject) => {
-            if (!file.type.startsWith('image/')) {
-                reject(new Error('File is not a valid image'));
-                return;
-            }
+            const img = new Image();
 
-            const url = URL.createObjectURL(file);
-            resolve(url);
+            img.onload = () => {
+                try {
+                    // Create off-screen canvas
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+
+                    // Extract pixel data
+                    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                    const pixels = imageData.data; // RGBA format
+
+                    // Detect if grayscale (R === G === B for all pixels)
+                    let isGrayscale = true;
+                    for (let i = 0; i < pixels.length; i += 4) {
+                        if (pixels[i] !== pixels[i + 1] || pixels[i] !== pixels[i + 2]) {
+                            isGrayscale = false;
+                            break;
+                        }
+                    }
+
+                    const width = img.width;
+                    const height = img.height;
+                    let arrayBuffer, metadata;
+
+                    if (isGrayscale) {
+                        // Depth-1 volume: just copy one channel
+                        const data = new Uint8Array(width * height);
+                        for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                            data[j] = pixels[i]; // R channel (same as G and B)
+                        }
+                        arrayBuffer = data.buffer;
+                        metadata = {
+                            dimensions: [width, height, 1],
+                            dataType: 'uint8',
+                            spacing: [1.0, 1.0, 1.0],
+                            isRGB: false
+                        };
+                    } else {
+                        // Depth-3 volume: R, G, B as separate z-slices
+                        const data = new Uint8Array(width * height * 3);
+                        const sliceSize = width * height;
+
+                        for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                            data[j] = pixels[i];                     // R at z=0
+                            data[j + sliceSize] = pixels[i + 1];     // G at z=1
+                            data[j + sliceSize * 2] = pixels[i + 2]; // B at z=2
+                        }
+                        arrayBuffer = data.buffer;
+                        metadata = {
+                            dimensions: [width, height, 3],
+                            dataType: 'uint8',
+                            spacing: [1.0, 1.0, 1.0],
+                            isRGB: true
+                        };
+                    }
+
+                    URL.revokeObjectURL(img.src);
+                    resolve(new VolumeData(arrayBuffer, metadata));
+                } catch (error) {
+                    URL.revokeObjectURL(img.src);
+                    reject(new Error(`Failed to convert image to volume: ${error.message}`));
+                }
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(img.src);
+                reject(new Error('Failed to load image'));
+            };
+
+            img.src = URL.createObjectURL(file);
         });
+    }
+
+    /**
+     * Convert TIFF data to VolumeData
+     * @param {object} tiffData - Result from loadTIFF()
+     * @returns {VolumeData}
+     */
+    convertTiffToVolume(tiffData) {
+        const { width, height, isGrayscale, isUint16, rawBuffer, tiff } = tiffData;
+
+        let arrayBuffer, metadata;
+
+        if (isGrayscale && isUint16) {
+            // Extract raw uint16 values from TIFF
+            const data = this.extractUint16FromTiff(tiff, width, height, rawBuffer);
+            arrayBuffer = data.buffer;
+            metadata = {
+                dimensions: [width, height, 1],
+                dataType: 'uint16',
+                spacing: [1.0, 1.0, 1.0],
+                isRGB: false
+            };
+        } else if (isGrayscale) {
+            // 8-bit grayscale
+            const canvas = tiff.toCanvas();
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const pixels = imageData.data;
+
+            const data = new Uint8Array(width * height);
+            for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                data[j] = pixels[i];
+            }
+            arrayBuffer = data.buffer;
+            metadata = {
+                dimensions: [width, height, 1],
+                dataType: 'uint8',
+                spacing: [1.0, 1.0, 1.0],
+                isRGB: false
+            };
+        } else {
+            // RGB TIFF - treat as 3-channel volume
+            const canvas = tiff.toCanvas();
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const pixels = imageData.data;
+
+            const data = new Uint8Array(width * height * 3);
+            const sliceSize = width * height;
+
+            for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                data[j] = pixels[i];
+                data[j + sliceSize] = pixels[i + 1];
+                data[j + sliceSize * 2] = pixels[i + 2];
+            }
+            arrayBuffer = data.buffer;
+            metadata = {
+                dimensions: [width, height, 3],
+                dataType: 'uint8',
+                spacing: [1.0, 1.0, 1.0],
+                isRGB: true
+            };
+        }
+
+        return new VolumeData(arrayBuffer, metadata);
+    }
+
+    /**
+     * Extract uint16 values from TIFF raw buffer
+     */
+    extractUint16FromTiff(tiff, width, height, rawBuffer) {
+        // Get strip offsets and byte counts from TIFF
+        const stripOffsets = tiff.getField(273); // StripOffsets tag
+        const stripByteCounts = tiff.getField(279); // StripByteCounts tag
+
+        const data = new Uint16Array(width * height);
+        const dataView = new DataView(rawBuffer);
+
+        if (Array.isArray(stripOffsets)) {
+            // Multi-strip TIFF
+            let pixelIndex = 0;
+            for (let s = 0; s < stripOffsets.length; s++) {
+                const offset = stripOffsets[s];
+                const byteCount = stripByteCounts[s];
+                const pixelCount = byteCount / 2;
+
+                for (let i = 0; i < pixelCount && pixelIndex < data.length; i++, pixelIndex++) {
+                    data[pixelIndex] = dataView.getUint16(offset + i * 2, true);
+                }
+            }
+        } else {
+            // Single-strip TIFF
+            const offset = stripOffsets;
+            for (let i = 0; i < data.length; i++) {
+                data[i] = dataView.getUint16(offset + i * 2, true);
+            }
+        }
+
+        return data;
     }
 
     /**

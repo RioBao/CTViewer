@@ -46,6 +46,9 @@ class CTViewer {
 
         // Maximized view state (null = grid view, 'xy'|'xz'|'yz'|'3d' = maximized)
         this.maximizedView = null;
+
+        // Single-view mode (for depth-1 volumes / 2D images)
+        this.singleViewMode = false;
     }
 
     /**
@@ -89,6 +92,9 @@ class CTViewer {
         this.state.slices.xz = Math.floor(ny / 2);
         this.state.slices.yz = Math.floor(nx / 2);
 
+        // Detect single-view mode (depth-1 volumes / 2D images)
+        this.singleViewMode = (nz === 1);
+
         // Initialize crosshair position to center
         this.crosshairPosition = {
             x: Math.floor(nx / 2),
@@ -101,9 +107,17 @@ class CTViewer {
             renderer.setDataRange(volumeData.min, volumeData.max);
         });
 
-        // Load into 3D renderer
-        if (this.renderer3D) {
+        // Load into 3D renderer (skip for single-slice volumes)
+        if (this.renderer3D && !this.singleViewMode) {
             this.renderer3D.loadVolume(volumeData);
+        }
+
+        // Auto-maximize XY view for single-slice volumes
+        if (this.singleViewMode) {
+            this.maximizeView('xy');
+        } else if (this.maximizedView) {
+            // Restore grid view when loading a 3D volume
+            this.restoreGridView();
         }
 
         // Initial render
@@ -111,6 +125,11 @@ class CTViewer {
 
         // Notify initial crosshair position
         this.notifyCrosshairChange();
+
+        // Notify initial slice positions
+        this.notifySliceChange('xy', this.state.slices.xy, nz);
+        this.notifySliceChange('xz', this.state.slices.xz, ny);
+        this.notifySliceChange('yz', this.state.slices.yz, nx);
 
         return {
             dimensions: volumeData.dimensions,
@@ -221,9 +240,17 @@ class CTViewer {
             const delta = e.deltaY > 0 ? -0.1 : 0.1;
             this.updateZoom(this.state.zoom + delta);
         } else {
-            // Slice navigation (only active view)
-            const delta = e.deltaY > 0 ? 1 : -1;
-            this.navigateSlice(axis, delta);
+            // In single-view mode, only allow slice navigation if there are multiple slices
+            // (e.g., RGB volumes with 3 channels)
+            if (this.singleViewMode && axis === 'xy' && this.volumeData.dimensions[2] <= 1) {
+                // Single slice - treat wheel as zoom instead
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                this.updateZoom(this.state.zoom + delta);
+            } else {
+                // Slice navigation (only active view)
+                const delta = e.deltaY > 0 ? 1 : -1;
+                this.navigateSlice(axis, delta);
+            }
         }
     }
 
@@ -447,8 +474,14 @@ class CTViewer {
      * Notify observers of slice change (for UI updates)
      */
     notifySliceChange(axis, sliceIndex, totalSlices) {
+        // Get channel label for RGB volumes (XY axis only)
+        let channelLabel = null;
+        if (axis === 'xy' && this.volumeData && this.volumeData.getChannelLabel) {
+            channelLabel = this.volumeData.getChannelLabel(sliceIndex);
+        }
+
         const event = new CustomEvent('slicechange', {
-            detail: { axis, sliceIndex, totalSlices }
+            detail: { axis, sliceIndex, totalSlices, channelLabel }
         });
         document.dispatchEvent(event);
     }

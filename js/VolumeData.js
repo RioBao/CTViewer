@@ -168,4 +168,30 @@ class VolumeData {
             memorySizeMB: (this.data.byteLength / (1024 * 1024)).toFixed(2)
         };
     }
+
+    /**
+     * Get channel label for RGB volumes
+     * @param {number} zIndex - Slice index along z-axis
+     * @returns {string|null} Channel name ('Red', 'Green', 'Blue') or null if not RGB
+     */
+    getChannelLabel(zIndex) {
+        if (this.metadata.isRGB && this.dimensions[2] === 3) {
+            return ['Red', 'Green', 'Blue'][zIndex] || null;
+        }
+        return null;
+    }
+
+    /**
+     * Check if this is a single-slice volume (2D image)
+     */
+    isSingleSlice() {
+        return this.dimensions[2] === 1;
+    }
+
+    /**
+     * Check if this is an RGB volume
+     */
+    isRGB() {
+        return this.metadata.isRGB === true;
+    }
 }
