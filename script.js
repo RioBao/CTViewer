@@ -1,8 +1,8 @@
 class ImageViewer {
     constructor() {
-        // CT imaging components
         this.fileParser = new FileParser();
         this.ctViewer = null;
+        this.histogram = null;
 
         this.initElements();
         this.initEventListeners();
@@ -10,60 +10,42 @@ class ImageViewer {
     }
 
     initElements() {
-        // File input elements
+        // Common UI elements
         this.placeholder = document.getElementById('placeholder');
         this.fileInput = document.getElementById('fileInput');
         this.dropZone = document.getElementById('dropZone');
         this.fileName = document.getElementById('fileName');
         this.imageInfo = document.getElementById('imageInfo');
         this.zoomLevel = document.getElementById('zoomLevel');
-        this.imageWrapper = document.querySelector('.image-wrapper');
 
         // CT view elements
         this.ct3DView = document.getElementById('ct3DView');
-        this.contrastSlider = document.getElementById('contrastSlider');
-        this.contrastValue = document.getElementById('contrastValue');
-        this.brightnessSlider = document.getElementById('brightnessSlider');
-        this.brightnessValue = document.getElementById('brightnessValue');
         this.sliceIndicatorXY = document.getElementById('sliceIndicatorXY');
         this.sliceIndicatorXZ = document.getElementById('sliceIndicatorXZ');
         this.sliceIndicatorYZ = document.getElementById('sliceIndicatorYZ');
         this.pixelInfoGroup = document.getElementById('pixelInfoGroup');
         this.pixelInfo = document.getElementById('pixelInfo');
 
-        // Canvas elements for medical view
+        // Canvas elements for volume view
         this.canvasXY = document.getElementById('canvasXY');
         this.canvasXZ = document.getElementById('canvasXZ');
         this.canvasYZ = document.getElementById('canvasYZ');
         this.canvas3D = document.getElementById('canvas3D');
+
+        // Histogram elements
+        this.histogramCanvas = document.getElementById('histogramCanvas');
+        this.handleMin = document.getElementById('handleMin');
+        this.handleMax = document.getElementById('handleMax');
+        this.histogramMin = document.getElementById('histogramMin');
+        this.histogramMax = document.getElementById('histogramMax');
     }
 
     initEventListeners() {
-        // Button events - delegate to CTViewer
+        // Button events
         document.getElementById('openBtn').addEventListener('click', () => this.fileInput.click());
-        document.getElementById('zoomInBtn').addEventListener('click', () => {
-            if (this.ctViewer) {
-                const state = this.ctViewer.getState();
-                this.ctViewer.updateZoom(state.zoom + 0.2);
-            }
-        });
-        document.getElementById('zoomOutBtn').addEventListener('click', () => {
-            if (this.ctViewer) {
-                const state = this.ctViewer.getState();
-                this.ctViewer.updateZoom(state.zoom - 0.2);
-            }
-        });
-        document.getElementById('resetBtn').addEventListener('click', () => {
-            if (this.ctViewer) {
-                this.ctViewer.resetView();
-                this.ctViewer.resetDataRange();
-                // Reset sliders
-                this.contrastSlider.value = 1.0;
-                this.contrastValue.textContent = '1.0';
-                this.brightnessSlider.value = 0;
-                this.brightnessValue.textContent = '0';
-            }
-        });
+        document.getElementById('zoomInBtn').addEventListener('click', () => this.zoomIn());
+        document.getElementById('zoomOutBtn').addEventListener('click', () => this.zoomOut());
+        document.getElementById('resetBtn').addEventListener('click', () => this.resetView());
         document.getElementById('fullscreenBtn').addEventListener('click', () => this.toggleFullscreen());
         document.getElementById('roiBtn').addEventListener('click', () => this.toggleRoiMode());
         document.getElementById('crosshairBtn').addEventListener('click', () => this.toggleCrosshairs());
@@ -75,9 +57,6 @@ class ImageViewer {
         this.dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
         this.dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
         this.dropZone.addEventListener('drop', (e) => this.handleDrop(e));
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
 
     async handleFiles(files) {
@@ -90,83 +69,45 @@ class ImageViewer {
                 return;
             }
 
-            // Process first group
+            // Process first group (for now, handle one dataset at a time)
             const firstGroup = fileGroups[0];
-            let volumeData;
 
             if (firstGroup.type === '3d-raw') {
-                // Load 3D RAW volume
-                volumeData = await this.loadCTVolume(firstGroup);
+                await this.loadCTVolume(firstGroup);
             } else if (firstGroup.type === 'tiff') {
-                // Load TIFF and convert to volume
-                volumeData = await this.loadTIFF(firstGroup);
+                await this.loadTIFF(firstGroup);
             } else if (firstGroup.type === '2d-image') {
-                // Convert 2D image to volume
-                this.showLoadingIndicator('Loading image...');
-                volumeData = await this.fileParser.convertImageToVolume(firstGroup.file);
-                this.hideLoadingIndicator();
-                this.fileName.textContent = firstGroup.name;
-            }
-
-            if (volumeData) {
-                this.displayVolume(volumeData);
+                await this.load2DImage(firstGroup);
             }
         } catch (error) {
-            this.hideLoadingIndicator();
             console.error('Error loading files:', error);
             alert(`Error loading files: ${error.message}`);
         }
     }
 
-    /**
-     * Display a volume in the viewer
-     */
-    displayVolume(volumeData) {
-        // Show CT view, hide placeholder
-        this.ct3DView.style.display = 'grid';
-        this.placeholder.style.display = 'none';
-
-        // Load volume into CT viewer
-        const info = this.ctViewer.loadVolume(volumeData);
-
-        // Update UI
-        const [nx, ny, nz] = info.dimensions;
-        this.imageInfo.textContent = `${nx}×${ny}×${nz} | ${info.dataType}`;
-
-        // Show/hide controls based on volume depth
-        const sliceControls = document.getElementById('sliceControls');
-        const quality3DGroup = document.getElementById('quality3DGroup');
-
-        if (nz === 1) {
-            // Single-slice volume (2D image) - hide slice controls and 3D quality
-            if (sliceControls) sliceControls.style.display = 'none';
-            if (quality3DGroup) quality3DGroup.style.display = 'none';
-        } else {
-            // Multi-slice volume - show all controls
-            if (sliceControls) sliceControls.style.display = 'block';
-            if (quality3DGroup) quality3DGroup.style.display = 'block';
+    // Zoom controls - delegate to CT viewer
+    zoomIn() {
+        if (this.ctViewer) {
+            const state = this.ctViewer.getState();
+            this.ctViewer.updateZoom(state.zoom + 0.2);
         }
+    }
 
-        // Enable ROI and crosshair buttons
-        const roiBtn = document.getElementById('roiBtn');
-        roiBtn.disabled = false;
-        roiBtn.classList.remove('active');
-
-        const crosshairBtn = document.getElementById('crosshairBtn');
-        crosshairBtn.disabled = false;
-        if (this.ctViewer.isCrosshairEnabled()) {
-            crosshairBtn.classList.add('active');
-            this.pixelInfoGroup.style.display = 'block';
-        } else {
-            crosshairBtn.classList.remove('active');
-            this.pixelInfoGroup.style.display = 'none';
+    zoomOut() {
+        if (this.ctViewer) {
+            const state = this.ctViewer.getState();
+            this.ctViewer.updateZoom(state.zoom - 0.2);
         }
+    }
 
-        // Reset sliders
-        this.contrastSlider.value = 1.0;
-        this.contrastValue.textContent = '1.0';
-        this.brightnessSlider.value = 0;
-        this.brightnessValue.textContent = '0';
+    resetView() {
+        if (this.ctViewer) {
+            this.ctViewer.resetView();
+            this.ctViewer.resetDataRange();
+        }
+        if (this.histogram) {
+            this.histogram.reset();
+        }
     }
 
     handleDragOver(e) {
@@ -185,33 +126,6 @@ class ImageViewer {
         this.dropZone.classList.remove('drag-over');
         const files = e.dataTransfer.files;
         this.handleFiles(files);
-    }
-
-    handleKeyboard(e) {
-        switch(e.key) {
-            case '+':
-            case '=':
-                if (this.ctViewer) {
-                    const state = this.ctViewer.getState();
-                    this.ctViewer.updateZoom(state.zoom + 0.2);
-                }
-                break;
-            case '-':
-                if (this.ctViewer) {
-                    const state = this.ctViewer.getState();
-                    this.ctViewer.updateZoom(state.zoom - 0.2);
-                }
-                break;
-            case '0':
-                if (this.ctViewer) {
-                    this.ctViewer.resetView();
-                }
-                break;
-            case 'f':
-            case 'F':
-                this.toggleFullscreen();
-                break;
-        }
     }
 
     toggleFullscreen() {
@@ -261,34 +175,32 @@ class ImageViewer {
         }
     }
 
-    // ===== CT Imaging Methods =====
+    // ===== Volume Loading Methods =====
 
     initCTComponents() {
         // Initialize CT viewer
         this.ctViewer = new CTViewer();
         this.ctViewer.initialize(this.canvasXY, this.canvasXZ, this.canvasYZ, this.canvas3D);
 
-        // Set up contrast slider
-        if (this.contrastSlider) {
-            this.contrastSlider.addEventListener('input', (e) => {
-                const value = parseFloat(e.target.value);
-                this.contrastValue.textContent = value.toFixed(1);
-                if (this.ctViewer) {
-                    this.ctViewer.updateContrast(value);
-                }
-            });
-        }
+        // Initialize histogram
+        this.histogram = new Histogram(
+            this.histogramCanvas,
+            this.handleMin,
+            this.handleMax,
+            this.histogramMin,
+            this.histogramMax
+        );
 
-        // Set up brightness slider
-        if (this.brightnessSlider) {
-            this.brightnessSlider.addEventListener('input', (e) => {
-                const value = parseInt(e.target.value);
-                this.brightnessValue.textContent = value;
-                if (this.ctViewer) {
-                    this.ctViewer.updateBrightness(value);
-                }
-            });
-        }
+        // Connect histogram to CTViewer range system
+        this.histogram.onRangeChange = (min, max) => {
+            if (this.ctViewer) {
+                // Update all renderers with new data range
+                Object.values(this.ctViewer.renderers).forEach(renderer => {
+                    renderer.setDataRange(min, max);
+                });
+                this.ctViewer.renderAllViews();
+            }
+        };
 
         // 3D quality selector
         const quality3DSelect = document.getElementById('quality3DSelect');
@@ -302,18 +214,14 @@ class ImageViewer {
 
         // Listen for slice change events from CT viewer
         document.addEventListener('slicechange', (e) => {
-            const { axis, sliceIndex, totalSlices, channelLabel } = e.detail;
+            const { axis, sliceIndex, totalSlices } = e.detail;
             const indicator = axis === 'xy' ? this.sliceIndicatorXY :
                             axis === 'xz' ? this.sliceIndicatorXZ :
                             this.sliceIndicatorYZ;
 
             if (indicator) {
                 const axisLabel = axis.toUpperCase();
-                let text = `${axisLabel}: ${sliceIndex + 1}/${totalSlices}`;
-                if (channelLabel) {
-                    text += ` (${channelLabel})`;
-                }
-                indicator.textContent = text;
+                indicator.textContent = `${axisLabel}: ${sliceIndex + 1}/${totalSlices}`;
             }
         });
 
@@ -346,13 +254,29 @@ class ImageViewer {
                 fileGroup.volumeinfoFile
             );
 
+            // Switch to CT mode
+            this.switchToCTMode();
+
+            // Load volume into CT viewer
+            const info = this.ctViewer.loadVolume(volumeData);
+
+            // Initialize histogram with volume data
+            if (this.histogram) {
+                this.histogram.setVolume(volumeData);
+            }
+
             // Update UI
             this.fileName.textContent = fileGroup.name;
+            this.imageInfo.textContent = `${info.dimensions[0]}×${info.dimensions[1]}×${info.dimensions[2]} | ${info.dataType}`;
+
+            // Initialize slice indicators
+            const [nx, ny, nz] = info.dimensions;
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
 
             // Hide loading indicator
             this.hideLoadingIndicator();
-
-            return volumeData;
 
         } catch (error) {
             this.hideLoadingIndicator();
@@ -366,19 +290,171 @@ class ImageViewer {
 
             const tiffData = await this.fileParser.loadTIFF(fileGroup.file);
 
-            // Convert TIFF to volume
+            // Convert TIFF to VolumeData (treats 2D as depth=1 volume)
             const volumeData = this.fileParser.convertTiffToVolume(tiffData);
+
+            // Switch to CT mode and display
+            this.switchToCTMode();
+
+            // Load volume into CT viewer
+            const info = this.ctViewer.loadVolume(volumeData);
+
+            // Initialize histogram with volume data
+            if (this.histogram) {
+                this.histogram.setVolume(volumeData);
+            }
 
             // Update UI
             this.fileName.textContent = fileGroup.name;
+            const [nx, ny, nz] = info.dimensions;
+            this.imageInfo.textContent = `${nx}×${ny}×${nz} | ${info.dataType}`;
+
+            // Initialize slice indicators
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
 
             this.hideLoadingIndicator();
-
-            return volumeData;
 
         } catch (error) {
             this.hideLoadingIndicator();
             throw error;
+        }
+    }
+
+    async load2DImage(fileGroup) {
+        try {
+            this.showLoadingIndicator('Loading image...');
+
+            const file = fileGroup.file;
+            const volumeData = await this.convertImageToVolume(file);
+
+            // Switch to CT mode and display
+            this.switchToCTMode();
+
+            // Load volume into CT viewer
+            const info = this.ctViewer.loadVolume(volumeData);
+
+            // Initialize histogram with volume data
+            if (this.histogram) {
+                this.histogram.setVolume(volumeData);
+            }
+
+            // Update UI
+            this.fileName.textContent = file.name;
+            const [nx, ny, nz] = info.dimensions;
+            this.imageInfo.textContent = `${nx}×${ny}×${nz} | ${info.dataType}`;
+
+            // Initialize slice indicators
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+
+            this.hideLoadingIndicator();
+
+        } catch (error) {
+            this.hideLoadingIndicator();
+            throw error;
+        }
+    }
+
+    convertImageToVolume(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixels = imageData.data;
+                const width = canvas.width;
+                const height = canvas.height;
+
+                // Check if grayscale (R≈G≈B for all pixels, sample first 100)
+                let isGrayscale = true;
+                for (let i = 0; i < Math.min(pixels.length, 400); i += 4) {
+                    if (Math.abs(pixels[i] - pixels[i+1]) > 5 || Math.abs(pixels[i+1] - pixels[i+2]) > 5) {
+                        isGrayscale = false;
+                        break;
+                    }
+                }
+
+                let arrayBuffer, metadata;
+
+                if (isGrayscale) {
+                    // Grayscale - single channel
+                    const data = new Uint8Array(width * height);
+                    for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                        data[j] = pixels[i];
+                    }
+                    arrayBuffer = data.buffer;
+                    metadata = {
+                        dimensions: [width, height, 1],
+                        dataType: 'uint8',
+                        spacing: [1.0, 1.0, 1.0],
+                        isRGB: false
+                    };
+                } else {
+                    // RGB - treat as 3-channel volume
+                    const data = new Uint8Array(width * height * 3);
+                    const sliceSize = width * height;
+                    for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+                        data[j] = pixels[i];                    // R channel
+                        data[j + sliceSize] = pixels[i + 1];    // G channel
+                        data[j + sliceSize * 2] = pixels[i + 2]; // B channel
+                    }
+                    arrayBuffer = data.buffer;
+                    metadata = {
+                        dimensions: [width, height, 3],
+                        dataType: 'uint8',
+                        spacing: [1.0, 1.0, 1.0],
+                        isRGB: true
+                    };
+                }
+
+                URL.revokeObjectURL(img.src);
+                resolve(new VolumeData(arrayBuffer, metadata));
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(img.src);
+                reject(new Error('Failed to load image'));
+            };
+
+            img.src = URL.createObjectURL(file);
+        });
+    }
+
+    switchToCTMode() {
+        // Hide placeholder, show volume view
+        if (this.placeholder) this.placeholder.style.display = 'none';
+        if (this.ct3DView) this.ct3DView.style.display = 'grid';
+
+        // Show slice controls and 3D quality
+        const sliceControls = document.getElementById('sliceControls');
+        if (sliceControls) sliceControls.style.display = 'block';
+
+        const quality3DGroup = document.getElementById('quality3DGroup');
+        if (quality3DGroup) quality3DGroup.style.display = 'block';
+
+        // Enable ROI and crosshair buttons
+        const roiBtn = document.getElementById('roiBtn');
+        roiBtn.disabled = false;
+        roiBtn.classList.remove('active');
+
+        const crosshairBtn = document.getElementById('crosshairBtn');
+        crosshairBtn.disabled = false;
+
+        // Set crosshair state based on CTViewer
+        if (this.ctViewer && this.ctViewer.isCrosshairEnabled()) {
+            crosshairBtn.classList.add('active');
+            this.pixelInfoGroup.style.display = 'block';
+        } else {
+            crosshairBtn.classList.remove('active');
+            this.pixelInfoGroup.style.display = 'none';
         }
     }
 
@@ -417,6 +493,7 @@ class ImageViewer {
             }
         }
     }
+
 }
 
 // Initialize the viewer

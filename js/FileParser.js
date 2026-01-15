@@ -517,30 +517,61 @@ class FileParser {
      * Extract uint16 values from TIFF raw buffer
      */
     extractUint16FromTiff(tiff, width, height, rawBuffer) {
-        // Get strip offsets and byte counts from TIFF
+        const data = new Uint16Array(width * height);
+        const dataView = new DataView(rawBuffer);
+        const expectedDataSize = width * height * 2;
+
+        // Try to get strip offsets from TIFF tags
         const stripOffsets = tiff.getField(273); // StripOffsets tag
         const stripByteCounts = tiff.getField(279); // StripByteCounts tag
 
-        const data = new Uint16Array(width * height);
-        const dataView = new DataView(rawBuffer);
+        // Detect endianness from TIFF header
+        const byteOrder = dataView.getUint16(0, false);
+        const littleEndian = (byteOrder === 0x4949); // 'II' = little endian
 
-        if (Array.isArray(stripOffsets)) {
-            // Multi-strip TIFF
-            let pixelIndex = 0;
-            for (let s = 0; s < stripOffsets.length; s++) {
-                const offset = stripOffsets[s];
-                const byteCount = stripByteCounts[s];
-                const pixelCount = byteCount / 2;
+        // Calculate fallback offset (assume data at end of file)
+        let fallbackOffset = rawBuffer.byteLength - expectedDataSize;
+        if (fallbackOffset < 8) fallbackOffset = 8; // Minimum TIFF header size
 
-                for (let i = 0; i < pixelCount && pixelIndex < data.length; i++, pixelIndex++) {
-                    data[pixelIndex] = dataView.getUint16(offset + i * 2, true);
+        try {
+            if (Array.isArray(stripOffsets) && stripOffsets.length > 0) {
+                // Multi-strip TIFF
+                let pixelIndex = 0;
+                for (let s = 0; s < stripOffsets.length; s++) {
+                    const offset = stripOffsets[s];
+                    const byteCount = stripByteCounts ? stripByteCounts[s] : (expectedDataSize / stripOffsets.length);
+                    const pixelCount = byteCount / 2;
+
+                    // Bounds check
+                    if (offset + byteCount > rawBuffer.byteLength) {
+                        throw new Error('Strip offset out of bounds');
+                    }
+
+                    for (let i = 0; i < pixelCount && pixelIndex < data.length; i++, pixelIndex++) {
+                        data[pixelIndex] = dataView.getUint16(offset + i * 2, littleEndian);
+                    }
+                }
+            } else if (stripOffsets && stripOffsets + expectedDataSize <= rawBuffer.byteLength) {
+                // Single-strip TIFF with valid offset
+                const offset = stripOffsets;
+                for (let i = 0; i < data.length; i++) {
+                    data[i] = dataView.getUint16(offset + i * 2, littleEndian);
+                }
+            } else {
+                // Fallback: assume data is at end of buffer
+                console.log(`Using fallback offset: ${fallbackOffset}`);
+                for (let i = 0; i < data.length; i++) {
+                    data[i] = dataView.getUint16(fallbackOffset + i * 2, littleEndian);
                 }
             }
-        } else {
-            // Single-strip TIFF
-            const offset = stripOffsets;
+        } catch (e) {
+            // Fallback on any error
+            console.warn('TIFF strip extraction failed, using fallback:', e.message);
             for (let i = 0; i < data.length; i++) {
-                data[i] = dataView.getUint16(offset + i * 2, true);
+                const byteOffset = fallbackOffset + i * 2;
+                if (byteOffset + 2 <= rawBuffer.byteLength) {
+                    data[i] = dataView.getUint16(byteOffset, littleEndian);
+                }
             }
         }
 
