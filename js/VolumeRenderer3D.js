@@ -359,6 +359,17 @@ class VolumeRenderer3D {
     }
 
     /**
+     * Set display range for windowing
+     * Values below min map to 0, values at/above max map to 1
+     * @param {number} min - Low value
+     * @param {number} max - High value
+     */
+    setDisplayRange(min, max) {
+        this.raycaster.setDisplayRange(min, max);
+        this.renderAtQuality(this.currentQuality);
+    }
+
+    /**
      * Reset camera to default view
      */
     resetCamera() {

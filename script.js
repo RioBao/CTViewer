@@ -194,11 +194,16 @@ class ImageViewer {
         // Connect histogram to CTViewer range system
         this.histogram.onRangeChange = (min, max) => {
             if (this.ctViewer) {
-                // Update all renderers with new data range
+                // Update all 2D slice renderers with new data range
                 Object.values(this.ctViewer.renderers).forEach(renderer => {
                     renderer.setDataRange(min, max);
                 });
                 this.ctViewer.renderAllViews();
+
+                // Update 3D renderer with new display range
+                if (this.ctViewer.renderer3D) {
+                    this.ctViewer.renderer3D.setDisplayRange(min, max);
+                }
             }
         };
 

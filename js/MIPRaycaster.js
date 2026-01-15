@@ -8,6 +8,9 @@ class MIPRaycaster {
         this.dimensions = [0, 0, 0];
         this.dataMin = 0;
         this.dataMax = 1;
+        // Display range for windowing (defaults to data range)
+        this.displayMin = 0;
+        this.displayMax = 1;
     }
 
     /**
@@ -19,6 +22,20 @@ class MIPRaycaster {
         this.dimensions = volumeData.dimensions;
         this.dataMin = volumeData.min;
         this.dataMax = volumeData.max;
+        // Default display range to full data range
+        this.displayMin = volumeData.min;
+        this.displayMax = volumeData.max;
+    }
+
+    /**
+     * Set display range for windowing
+     * Values below displayMin map to 0, values at/above displayMax map to 1
+     * @param {number} min - Low value
+     * @param {number} max - High value
+     */
+    setDisplayRange(min, max) {
+        this.displayMin = min;
+        this.displayMax = max;
     }
 
     /**
@@ -105,8 +122,8 @@ class MIPRaycaster {
         const stepSize = settings.stepSize || 1.0;
         const threshold = settings.threshold || 0;
 
-        // Data range for normalization
-        const dataRange = this.dataMax - this.dataMin;
+        // Display range for normalization (windowing)
+        const displayRange = this.displayMax - this.displayMin;
 
         // For each pixel, cast a ray
         for (let py = 0; py < height; py++) {
@@ -162,13 +179,15 @@ class MIPRaycaster {
                     maxValue = this.dataMin;
                 }
 
-                // Normalize to 0-255
+                // Normalize to 0-255 using display range (windowing)
+                // Values <= displayMin map to 0, values >= displayMax map to 255
                 let normalized;
-                if (maxValue <= this.dataMin || dataRange === 0) {
+                if (maxValue <= this.displayMin || displayRange === 0) {
                     normalized = 0;
+                } else if (maxValue >= this.displayMax) {
+                    normalized = 255;
                 } else {
-                    normalized = Math.floor(((maxValue - this.dataMin) / dataRange) * 255);
-                    normalized = Math.max(0, Math.min(255, normalized));
+                    normalized = Math.floor(((maxValue - this.displayMin) / displayRange) * 255);
                 }
 
                 // Write pixel (grayscale)
