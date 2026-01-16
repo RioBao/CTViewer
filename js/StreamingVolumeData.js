@@ -26,9 +26,10 @@ class StreamingVolumeData {
         this.max = 1;
 
         // Slice cache (LRU-style, limited size)
-        // Cache more slices for smoother scrolling (uses ~4MB per slice for 1004x1004 float)
+        // Cache more slices for smoother scrolling and YZ loading
+        // ~4MB per slice for 1004x1004 float, 100 slices = ~400MB max cache
         this.sliceCache = new Map();
-        this.maxCachedSlices = 50;
+        this.maxCachedSlices = 100;
         this.cacheOrder = [];
 
         // Prefetch settings
@@ -433,6 +434,7 @@ class StreamingVolumeData {
 
     /**
      * Async load high-res YZ slice by reading column from each Z slice
+     * Caches XY slices as they're read for faster subsequent access
      */
     async loadYZSliceAsync(x) {
         const [nx, ny, nz] = this.dimensions;
@@ -443,36 +445,32 @@ class StreamingVolumeData {
             const sliceData = new Float32Array(ny * nz);
 
             // Read column x from each Z slice
-            // Column data is not contiguous, so we read full rows containing our x
-            for (let z = 0; z < nz; z++) {
-                // For each z, we need values at (x, y, z) for all y
-                // These are at file positions: (x + y*nx + z*nx*ny) * bytesPerVoxel
-                // Read the full XY slice and extract column x
-                const sliceStart = z * nx * ny * this.bytesPerVoxel;
-                const sliceEnd = sliceStart + nx * ny * this.bytesPerVoxel;
+            // Read in batches to improve performance
+            const BATCH_SIZE = 20;
 
-                // Check XY cache first
-                const cacheKey = `xy_${z}`;
-                let xySliceData;
+            for (let zStart = 0; zStart < nz; zStart += BATCH_SIZE) {
+                const zEnd = Math.min(zStart + BATCH_SIZE, nz);
 
-                if (this.sliceCache.has(cacheKey)) {
-                    xySliceData = this.sliceCache.get(cacheKey).data;
-                } else {
-                    // Read full XY slice from file
-                    const sliceBlob = this.file.slice(sliceStart, sliceEnd);
-                    const sliceBuffer = await this.readBlob(sliceBlob);
-                    xySliceData = this.bufferToTypedArray(sliceBuffer, this.dataType);
+                // Process batch of Z slices in parallel
+                const batchPromises = [];
+                for (let z = zStart; z < zEnd; z++) {
+                    batchPromises.push(this.loadAndCacheXYSlice(z, nx, ny));
                 }
 
-                // Extract column x from this slice
-                for (let y = 0; y < ny && (x + y * nx) < xySliceData.length; y++) {
-                    sliceData[y + z * ny] = xySliceData[x + y * nx];
+                const batchResults = await Promise.all(batchPromises);
+
+                // Extract column x from each slice in batch
+                for (let i = 0; i < batchResults.length; i++) {
+                    const z = zStart + i;
+                    const xySliceData = batchResults[i];
+
+                    for (let y = 0; y < ny && (x + y * nx) < xySliceData.length; y++) {
+                        sliceData[y + z * ny] = xySliceData[x + y * nx];
+                    }
                 }
 
-                // Yield occasionally to keep UI responsive
-                if (z % 50 === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                }
+                // Yield to keep UI responsive between batches
+                await new Promise(resolve => setTimeout(resolve, 0));
             }
 
             // Only update if this is still the requested slice
@@ -493,6 +491,36 @@ class StreamingVolumeData {
         } finally {
             this.yzLoadInProgress = false;
         }
+    }
+
+    /**
+     * Load and cache an XY slice, returning the data
+     */
+    async loadAndCacheXYSlice(z, nx, ny) {
+        const cacheKey = `xy_${z}`;
+
+        // Check cache first
+        if (this.sliceCache.has(cacheKey)) {
+            return this.sliceCache.get(cacheKey).data;
+        }
+
+        // Read from file
+        const sliceStart = z * nx * ny * this.bytesPerVoxel;
+        const sliceEnd = sliceStart + nx * ny * this.bytesPerVoxel;
+
+        const sliceBlob = this.file.slice(sliceStart, sliceEnd);
+        const sliceBuffer = await this.readBlob(sliceBlob);
+        const xySliceData = this.bufferToTypedArray(sliceBuffer, this.dataType);
+
+        // Cache the slice for future use
+        const result = {
+            data: xySliceData,
+            width: nx,
+            height: ny
+        };
+        this.addToCache(cacheKey, result);
+
+        return xySliceData;
     }
 
     /**
