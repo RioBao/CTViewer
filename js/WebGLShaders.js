@@ -89,13 +89,16 @@ void main() {
     // Ray direction (unit vector)
     vec3 rayDir = forward;
 
-    // Ray march and find maximum intensity
-    float maxValue = 0.0;
-    vec3 pos = rayOrigin;
-
     // Volume bounds in aspect-corrected space: [-volSize/2, +volSize/2]
     vec3 volMin = -volSize * 0.5;
     vec3 volMax = volSize * 0.5;
+
+    // Display range for windowing
+    float displayRange = uDisplayMax - uDisplayMin;
+
+    // Opacity-weighted MIP
+    float maxValue = 0.0;
+    vec3 pos = rayOrigin;
 
     for (int i = 0; i < uNumSteps; i++) {
         // Check if inside volume bounds
@@ -103,33 +106,31 @@ void main() {
             // Convert to texture coordinates [0, 1]
             vec3 texCoord = (pos - volMin) / volSize;
             float value = texture(uVolume, texCoord).r;
-            maxValue = max(maxValue, value);
 
-            // Early termination at maximum value
-            if (maxValue >= 0.999) break;
+            // Apply windowing
+            float normalized;
+            if (value <= uDisplayMin || displayRange <= 0.0) {
+                normalized = 0.0;
+            } else if (value >= uDisplayMax) {
+                normalized = 1.0;
+            } else {
+                normalized = (value - uDisplayMin) / displayRange;
+            }
+
+            // Apply gamma
+            float intensity = pow(normalized, uGamma);
+
+            // Opacity-weighted MIP: use intensity as its own opacity
+            // This creates intensity² response, emphasizing bright values
+            maxValue = max(maxValue, intensity * intensity);
         }
 
         // Move to next position
         pos += rayDir * uStepSize;
     }
 
-    // Apply windowing (display range)
-    float displayRange = uDisplayMax - uDisplayMin;
-    float normalized;
-
-    if (maxValue <= uDisplayMin || displayRange <= 0.0) {
-        normalized = 0.0;
-    } else if (maxValue >= uDisplayMax) {
-        normalized = 1.0;
-    } else {
-        normalized = (maxValue - uDisplayMin) / displayRange;
-    }
-
-    // Apply gamma correction
-    normalized = pow(normalized, uGamma);
-
-    // Output grayscale
-    fragColor = vec4(vec3(normalized), 1.0);
+    // Output MIP result
+    fragColor = vec4(vec3(maxValue), 1.0);
 }
 `
 };
