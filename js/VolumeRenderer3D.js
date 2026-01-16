@@ -41,8 +41,8 @@ class VolumeRenderer3D {
         if (this.useWebGL) {
             this.qualityPresets = {
                 low: { resolution: 256, numSteps: 200, stepSize: 0.01 },
-                medium: { resolution: 512, numSteps: 400, stepSize: 0.005 },
-                high: { resolution: 1024, numSteps: 800, stepSize: 0.0025 }
+                medium: { resolution: 1024, numSteps: 800, stepSize: 0.0025 },
+                high: { resolution: 2048, numSteps: 1600, stepSize: 0.00125 }
             };
         } else {
             this.qualityPresets = {
