@@ -1,18 +1,33 @@
 /**
  * 3D Volume Renderer
  * Manages camera, user interaction, and progressive rendering
+ * Uses WebGL2 when available, falls back to CPU rendering
  */
 class VolumeRenderer3D {
     constructor(canvas) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext('2d');
+
+        // Try WebGL2 first
+        this.gl = WebGLUtils.createContext(canvas);
+        this.useWebGL = !!this.gl;
+
+        if (this.useWebGL) {
+            console.log('Using WebGL2 for 3D rendering');
+            this.webglRenderer = new WebGLMIPRenderer(canvas, this.gl);
+            this.setupContextLostHandlers();
+        } else {
+            console.log('WebGL2 not available, using CPU rendering');
+            this.ctx = canvas.getContext('2d');
+            this.raycaster = new MIPRaycaster();
+            this.initRenderBuffers();
+        }
 
         // Set canvas size to match display (will be updated dynamically)
         this.displaySize = 512;
         this.updateDisplaySize();
 
-        // Raycaster
-        this.raycaster = new MIPRaycaster();
+        // Volume reference for display range conversion
+        this.volumeData = null;
 
         // Camera state
         this.camera = {
@@ -21,27 +36,33 @@ class VolumeRenderer3D {
             distance: 1.0     // Zoom factor (1.0 = fit to viewport)
         };
 
-        // Render quality settings
-        this.qualityPresets = {
-            low: { resolution: 64, stepSize: 2.0 },
-            medium: { resolution: 128, stepSize: 1.0 },
-            high: { resolution: 256, stepSize: 0.5 }
-        };
+        // Quality presets - WebGL can handle higher resolutions
+        // Total ray length = numSteps * stepSize, needs to be >= 2.0 to traverse volume
+        if (this.useWebGL) {
+            this.qualityPresets = {
+                low: { resolution: 256, numSteps: 200, stepSize: 0.01 },
+                medium: { resolution: 512, numSteps: 400, stepSize: 0.005 },
+                high: { resolution: 1024, numSteps: 800, stepSize: 0.0025 }
+            };
+        } else {
+            this.qualityPresets = {
+                low: { resolution: 64, numSteps: 64, stepSize: 2.0 },
+                medium: { resolution: 128, numSteps: 128, stepSize: 1.0 },
+                high: { resolution: 256, numSteps: 256, stepSize: 0.5 }
+            };
+        }
 
         this.currentQuality = 'medium';
         this.interactionQuality = 'low';
 
-        // Render settings
+        // Render settings (for CPU renderer)
         this.settings = {
             stepSize: 1.0,
             threshold: 0
         };
 
-        // Render buffers
-        this.renderResolution = 128;
-        this.imageData = null;
-        this.offscreenCanvas = null;
-        this.offscreenCtx = null;
+        // Render state
+        this.renderResolution = this.qualityPresets.medium.resolution;
 
         // Interaction state
         this.isDragging = false;
@@ -54,17 +75,42 @@ class VolumeRenderer3D {
         // Volume loaded flag
         this.volumeLoaded = false;
 
-        this.initRenderBuffers();
         this.setupEventListeners();
         this.drawPlaceholder();
     }
 
     /**
-     * Initialize offscreen render buffers
+     * Initialize offscreen render buffers (CPU mode only)
      */
     initRenderBuffers() {
         this.offscreenCanvas = document.createElement('canvas');
         this.offscreenCtx = this.offscreenCanvas.getContext('2d');
+        this.imageData = null;
+    }
+
+    /**
+     * Set up WebGL context lost/restored handlers
+     */
+    setupContextLostHandlers() {
+        this.canvas.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+            console.warn('WebGL context lost');
+            this.contextLost = true;
+        });
+
+        this.canvas.addEventListener('webglcontextrestored', () => {
+            console.log('WebGL context restored');
+            this.contextLost = false;
+            // Reinitialize WebGL
+            this.gl = WebGLUtils.createContext(this.canvas);
+            if (this.gl) {
+                this.webglRenderer = new WebGLMIPRenderer(this.canvas, this.gl);
+                if (this.volumeData) {
+                    this.webglRenderer.uploadVolume(this.volumeData);
+                }
+                this.render();
+            }
+        });
     }
 
     /**
@@ -111,7 +157,29 @@ class VolumeRenderer3D {
      * Load volume data for rendering
      */
     loadVolume(volumeData) {
-        this.raycaster.setVolume(volumeData);
+        this.volumeData = volumeData;
+
+        if (this.useWebGL) {
+            const success = this.webglRenderer.uploadVolume(volumeData);
+            if (!success) {
+                // Fall back to CPU if texture upload fails
+                console.warn('WebGL texture upload failed, falling back to CPU');
+                this.useWebGL = false;
+                this.ctx = this.canvas.getContext('2d');
+                this.raycaster = new MIPRaycaster();
+                this.initRenderBuffers();
+                this.raycaster.setVolume(volumeData);
+                // Update quality presets to CPU values
+                this.qualityPresets = {
+                    low: { resolution: 64, numSteps: 64, stepSize: 2.0 },
+                    medium: { resolution: 128, numSteps: 128, stepSize: 1.0 },
+                    high: { resolution: 256, numSteps: 256, stepSize: 0.5 }
+                };
+            }
+        } else {
+            this.raycaster.setVolume(volumeData);
+        }
+
         this.volumeLoaded = true;
 
         // Reset camera to default view
@@ -128,17 +196,29 @@ class VolumeRenderer3D {
      */
     drawPlaceholder() {
         this.updateDisplaySize();
-        this.ctx.fillStyle = '#1a1a1a';
-        this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
 
-        this.ctx.fillStyle = '#666';
-        this.ctx.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText('3D Rendering', this.displaySize / 2, this.displaySize / 2 - 10);
+        if (this.useWebGL) {
+            const gl = this.gl;
+            gl.viewport(0, 0, this.displaySize, this.displaySize);
+            gl.clearColor(0.1, 0.1, 0.1, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+        } else {
+            this.ctx.fillStyle = '#1a1a1a';
+            this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
+        }
 
-        this.ctx.fillStyle = '#555';
-        this.ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
-        this.ctx.fillText('Load a volume to view', this.displaySize / 2, this.displaySize / 2 + 15);
+        // Draw text (need 2D context for text)
+        const ctx2d = this.useWebGL ? null : this.ctx;
+        if (ctx2d) {
+            ctx2d.fillStyle = '#666';
+            ctx2d.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx2d.textAlign = 'center';
+            ctx2d.fillText('3D Rendering', this.displaySize / 2, this.displaySize / 2 - 10);
+
+            ctx2d.fillStyle = '#555';
+            ctx2d.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx2d.fillText('Load a volume to view', this.displaySize / 2, this.displaySize / 2 + 15);
+        }
     }
 
     /**
@@ -149,7 +229,12 @@ class VolumeRenderer3D {
 
         const preset = this.qualityPresets[quality] || this.qualityPresets.medium;
         this.renderResolution = preset.resolution;
-        this.settings.stepSize = preset.stepSize;
+
+        if (this.useWebGL) {
+            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize);
+        } else {
+            this.settings.stepSize = preset.stepSize;
+        }
 
         this.render();
     }
@@ -159,12 +244,35 @@ class VolumeRenderer3D {
      */
     render() {
         if (!this.volumeLoaded || this.isRendering) return;
+        if (this.useWebGL && this.contextLost) return;
 
         this.isRendering = true;
 
         // Update canvas size based on container
         this.updateDisplaySize();
 
+        if (this.useWebGL) {
+            this.renderWebGL();
+        } else {
+            this.renderCPU();
+        }
+
+        this.isRendering = false;
+    }
+
+    /**
+     * Render using WebGL
+     */
+    renderWebGL() {
+        this.webglRenderer.render(this.camera);
+        // Note: WebGL renders directly to canvas, no label overlay in WebGL mode
+        // Could add a 2D overlay canvas for labels if needed
+    }
+
+    /**
+     * Render using CPU raycaster
+     */
+    renderCPU() {
         // Set up offscreen canvas at render resolution
         this.offscreenCanvas.width = this.renderResolution;
         this.offscreenCanvas.height = this.renderResolution;
@@ -193,14 +301,14 @@ class VolumeRenderer3D {
 
         // Draw label
         this.drawLabel();
-
-        this.isRendering = false;
     }
 
     /**
-     * Draw view label on canvas
+     * Draw view label on canvas (CPU mode only)
      */
     drawLabel() {
+        if (this.useWebGL) return;
+
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         this.ctx.fillRect(8, 8, 50, 22);
 
@@ -321,7 +429,12 @@ class VolumeRenderer3D {
         // Switch to low quality
         const preset = this.qualityPresets[this.interactionQuality];
         this.renderResolution = preset.resolution;
-        this.settings.stepSize = preset.stepSize;
+
+        if (this.useWebGL) {
+            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize);
+        } else {
+            this.settings.stepSize = preset.stepSize;
+        }
     }
 
     endInteraction() {
@@ -361,11 +474,15 @@ class VolumeRenderer3D {
     /**
      * Set display range for windowing
      * Values below min map to 0, values at/above max map to 1
-     * @param {number} min - Low value
-     * @param {number} max - High value
+     * @param {number} min - Low value (in original data range)
+     * @param {number} max - High value (in original data range)
      */
     setDisplayRange(min, max) {
-        this.raycaster.setDisplayRange(min, max);
+        if (this.useWebGL && this.volumeData) {
+            this.webglRenderer.setDisplayRange(min, max, this.volumeData.min, this.volumeData.max);
+        } else if (this.raycaster) {
+            this.raycaster.setDisplayRange(min, max);
+        }
         this.renderAtQuality(this.currentQuality);
     }
 
@@ -374,7 +491,11 @@ class VolumeRenderer3D {
      * @param {number} gamma - Gamma value (1.0 = no change, <1 = brighten, >1 = darken)
      */
     setGamma(gamma) {
-        this.raycaster.setGamma(gamma);
+        if (this.useWebGL) {
+            this.webglRenderer.setGamma(gamma);
+        } else if (this.raycaster) {
+            this.raycaster.setGamma(gamma);
+        }
         this.renderAtQuality(this.currentQuality);
     }
 
@@ -401,5 +522,13 @@ class VolumeRenderer3D {
     setCamera(camera) {
         Object.assign(this.camera, camera);
         this.renderAtQuality(this.currentQuality);
+    }
+
+    /**
+     * Check if using WebGL rendering
+     * @returns {boolean}
+     */
+    isUsingWebGL() {
+        return this.useWebGL;
     }
 }
