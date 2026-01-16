@@ -49,6 +49,10 @@ class CTViewer {
 
         // Single-view mode (for depth-1 volumes / 2D images)
         this.singleViewMode = false;
+
+        // Progressive loading state
+        this.progressiveVolume = null;
+        this.lowResVolume = null;
     }
 
     /**
@@ -136,6 +140,148 @@ class CTViewer {
             dataType: volumeData.dataType,
             range: [volumeData.min, volumeData.max]
         };
+    }
+
+    /**
+     * Load volume data progressively with Z-axis tiling
+     * @param {ProgressiveVolumeData} progressiveVolumeData
+     * @returns {Object} Callbacks for progressive loading phases
+     */
+    loadVolumeProgressive(progressiveVolumeData) {
+        this.progressiveVolume = progressiveVolumeData;
+
+        // Return callbacks for the loader to call
+        return {
+            onLowResReady: (lowResVolume) => this.handleLowResReady(lowResVolume),
+            onBlockReady: (blockIndex, zStart, zEnd) => this.handleBlockReady(blockIndex, zStart, zEnd),
+            onAllBlocksReady: () => this.handleAllBlocksReady()
+        };
+    }
+
+    /**
+     * Handle low-res volume ready - initialize all views with preview
+     */
+    handleLowResReady(lowResVolume) {
+        this.lowResVolume = lowResVolume;
+
+        // progressiveVolume and volumeData should already be set by caller
+        if (!this.progressiveVolume) {
+            console.error('handleLowResReady called but progressiveVolume is not set');
+            return;
+        }
+
+        // Initialize slice indices to middle of FULL resolution volume
+        const [nx, ny, nz] = this.progressiveVolume.dimensions;
+        this.state.slices.xy = Math.floor(nz / 2);
+        this.state.slices.xz = Math.floor(ny / 2);
+        this.state.slices.yz = Math.floor(nx / 2);
+
+        // Detect single-view mode
+        this.singleViewMode = (nz === 1);
+
+        // Initialize crosshair position to center
+        this.crosshairPosition = {
+            x: Math.floor(nx / 2),
+            y: Math.floor(ny / 2),
+            z: Math.floor(nz / 2)
+        };
+
+        // Set data range for all renderers using min/max from full-res scan
+        Object.values(this.renderers).forEach(renderer => {
+            renderer.setDataRange(this.progressiveVolume.min, this.progressiveVolume.max);
+        });
+
+        // Load LOW-RES into 3D renderer for immediate preview
+        if (this.renderer3D && !this.singleViewMode) {
+            this.renderer3D.loadVolume(lowResVolume);
+        }
+
+        // Auto-maximize XY view for single-slice volumes
+        if (this.singleViewMode) {
+            this.maximizeView('xy');
+        } else if (this.maximizedView) {
+            this.restoreGridView();
+        }
+
+        // Initial render with low-res/mixed data
+        this.renderAllViews();
+
+        // Notify UI
+        this.notifyCrosshairChange();
+        this.notifySliceChange('xy', this.state.slices.xy, nz);
+        this.notifySliceChange('xz', this.state.slices.xz, ny);
+        this.notifySliceChange('yz', this.state.slices.yz, nx);
+
+        // Dispatch event for UI (e.g., loading progress)
+        document.dispatchEvent(new CustomEvent('volumelowresready', {
+            detail: {
+                dimensions: this.progressiveVolume.dimensions,
+                dataRange: [this.progressiveVolume.min, this.progressiveVolume.max]
+            }
+        }));
+
+        console.log('CTViewer: Low-res ready, showing preview');
+    }
+
+    /**
+     * Handle block ready - update affected views
+     */
+    handleBlockReady(blockIndex, zStart, zEnd) {
+        if (!this.progressiveVolume) return;
+
+        const [nx, ny, nz] = this.progressiveVolume.dimensions;
+
+        // XY view: only re-render if current slice is in this block's Z range
+        if (this.state.slices.xy >= zStart && this.state.slices.xy < zEnd) {
+            this.renderView('xy');
+        }
+
+        // XZ and YZ views span all Z, so they always need updating
+        this.renderView('xz');
+        this.renderView('yz');
+
+        // Draw crosshairs
+        if (this.crosshairEnabled) {
+            this.drawCrosshairs();
+        }
+
+        // Dispatch event for UI (loading progress)
+        const progress = this.progressiveVolume.getLoadProgress();
+        document.dispatchEvent(new CustomEvent('blockloaded', {
+            detail: {
+                blockIndex,
+                zStart,
+                zEnd,
+                blocksLoaded: progress.blocksLoaded,
+                totalBlocks: progress.totalBlocks,
+                percent: progress.percent
+            }
+        }));
+
+        console.log(`CTViewer: Block ${blockIndex} ready (z=${zStart}-${zEnd}), ${progress.percent}% complete`);
+    }
+
+    /**
+     * Handle all blocks ready - upload full-res to 3D renderer
+     */
+    handleAllBlocksReady() {
+        if (!this.progressiveVolume) return;
+
+        console.log('CTViewer: All blocks loaded, updating 3D renderer');
+
+        // Now upload the full-resolution volume to the 3D renderer
+        if (this.renderer3D && !this.singleViewMode) {
+            const fullResVolume = this.progressiveVolume.getFullVolumeData();
+            this.renderer3D.loadVolume(fullResVolume);
+        }
+
+        // Dispatch completion event
+        document.dispatchEvent(new CustomEvent('volumeloadcomplete', {
+            detail: {
+                dimensions: this.progressiveVolume.dimensions,
+                dataRange: [this.progressiveVolume.min, this.progressiveVolume.max]
+            }
+        }));
     }
 
     /**

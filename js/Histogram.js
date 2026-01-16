@@ -81,6 +81,11 @@ class Histogram {
      * Set volume data and calculate histogram
      */
     setVolume(volumeData) {
+        if (!volumeData) {
+            console.warn('Histogram.setVolume called with null/undefined volumeData');
+            return;
+        }
+
         this.volumeMin = volumeData.min;
         this.volumeMax = volumeData.max;
         this.currentMin = volumeData.min;
@@ -89,12 +94,19 @@ class Histogram {
         // Re-setup canvas to ensure proper dimensions (may have been 0 during init)
         this.setupCanvas();
 
-        // Calculate histogram from entire volume
-        this.histogramData = this.imageProcessor.calculateHistogram(
-            volumeData.data,
-            volumeData.min,
-            volumeData.max
-        );
+        // Calculate histogram from volume data
+        // For streaming volumes, this may use low-res data
+        const data = volumeData.data;
+        if (!data || data.length === 0) {
+            console.warn('Histogram.setVolume: no data available yet');
+            this.histogramData = new Array(256).fill(0);
+        } else {
+            this.histogramData = this.imageProcessor.calculateHistogram(
+                data,
+                volumeData.min,
+                volumeData.max
+            );
+        }
 
         this.render();
         this.updateHandles();

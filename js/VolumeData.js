@@ -29,6 +29,7 @@ class VolumeData {
                 }
                 return new Uint16Array(buffer);
 
+            case 'float':
             case 'float32':
                 if (buffer.byteLength < expectedSize * 4) {
                     throw new Error(`Buffer size mismatch: expected ${expectedSize * 4} bytes, got ${buffer.byteLength}`);

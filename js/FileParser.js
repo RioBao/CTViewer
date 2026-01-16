@@ -227,9 +227,15 @@ class FileParser {
             throw new Error('Metadata must contain "dataType" field');
         }
 
+        // Normalize dataType aliases
+        const dataTypeLower = metadata.dataType.toLowerCase();
+        if (dataTypeLower === 'float') {
+            metadata.dataType = 'float32';
+        }
+
         const validTypes = ['uint8', 'uint16', 'float32'];
         if (!validTypes.includes(metadata.dataType.toLowerCase())) {
-            throw new Error(`Invalid dataType "${metadata.dataType}". Must be one of: ${validTypes.join(', ')}`);
+            throw new Error(`Invalid dataType "${metadata.dataType}". Must be one of: ${validTypes.join(', ')}, float`);
         }
 
         // Check for negative dimensions
@@ -240,10 +246,89 @@ class FileParser {
 
     /**
      * Load RAW binary file
+     * Uses chunked reading for large files to avoid browser memory issues
      * @param {File} file
      * @returns {Promise<ArrayBuffer>}
      */
     async loadRAWFile(file) {
+        const fileSizeGB = file.size / (1024 * 1024 * 1024);
+        console.log(`Loading RAW file: ${file.name}, size: ${fileSizeGB.toFixed(2)} GB`);
+
+        // Use chunked reading for files larger than 500MB
+        const CHUNK_THRESHOLD = 500 * 1024 * 1024;
+
+        if (file.size > CHUNK_THRESHOLD) {
+            return this.loadRAWFileChunked(file);
+        }
+
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                console.log(`RAW file loaded successfully, buffer size: ${e.target.result.byteLength}`);
+                resolve(e.target.result);
+            };
+
+            reader.onerror = (e) => {
+                const error = reader.error;
+                console.error('FileReader error:', error);
+                reject(new Error(`Failed to read RAW file: ${error ? error.message : 'Unknown error'}`));
+            };
+
+            reader.onabort = () => {
+                reject(new Error('RAW file reading was aborted'));
+            };
+
+            try {
+                reader.readAsArrayBuffer(file);
+            } catch (e) {
+                reject(new Error(`Failed to start reading RAW file: ${e.message}`));
+            }
+        });
+    }
+
+    /**
+     * Load RAW file in chunks for large files
+     * @param {File} file
+     * @returns {Promise<ArrayBuffer>}
+     */
+    async loadRAWFileChunked(file) {
+        const CHUNK_SIZE = 256 * 1024 * 1024; // 256MB chunks
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+        console.log(`Reading file in ${totalChunks} chunks of ${CHUNK_SIZE / (1024 * 1024)}MB`);
+
+        // Pre-allocate the full buffer
+        const fullBuffer = new ArrayBuffer(file.size);
+        const fullView = new Uint8Array(fullBuffer);
+
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+
+            console.log(`Reading chunk ${i + 1}/${totalChunks} (${start} - ${end})`);
+
+            const chunkBuffer = await this.readFileChunk(chunk);
+            const chunkView = new Uint8Array(chunkBuffer);
+
+            // Copy chunk into full buffer
+            fullView.set(chunkView, start);
+
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        console.log(`RAW file loaded successfully (chunked), buffer size: ${fullBuffer.byteLength}`);
+        return fullBuffer;
+    }
+
+    /**
+     * Read a single file chunk
+     * @param {Blob} chunk
+     * @returns {Promise<ArrayBuffer>}
+     */
+    readFileChunk(chunk) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
 
@@ -251,11 +336,12 @@ class FileParser {
                 resolve(e.target.result);
             };
 
-            reader.onerror = () => {
-                reject(new Error('Failed to read RAW file'));
+            reader.onerror = (e) => {
+                const error = reader.error;
+                reject(new Error(`Failed to read chunk: ${error ? error.message : 'Unknown error'}`));
             };
 
-            reader.readAsArrayBuffer(file);
+            reader.readAsArrayBuffer(chunk);
         });
     }
 
@@ -294,6 +380,79 @@ class FileParser {
 
         } catch (error) {
             throw new Error(`Failed to load 3D volume: ${error.message}`);
+        }
+    }
+
+    /**
+     * Load 3D volume progressively with Z-axis tiling
+     * Shows low-res preview immediately, then loads blocks from center outward
+     * For very large files (>1GB), uses streaming mode that never loads full data
+     * @param {File} rawFile
+     * @param {File} jsonFile - JSON metadata file (optional if volumeinfoFile provided)
+     * @param {Object} callbacks - { onProgress, onLowResReady, onBlockReady, onAllBlocksReady }
+     * @param {File} volumeinfoFile - Volumeinfo metadata file (optional if jsonFile provided)
+     * @returns {Promise<ProgressiveVolumeData|StreamingVolumeData>}
+     */
+    async load3DVolumeProgressive(rawFile, jsonFile, callbacks, volumeinfoFile) {
+        try {
+            // Load metadata first (JSON takes priority over volumeinfo)
+            if (callbacks.onProgress) callbacks.onProgress({ stage: 'metadata', progress: 0 });
+
+            let metadata;
+            if (jsonFile) {
+                metadata = await this.loadJSONMetadata(jsonFile);
+            } else if (volumeinfoFile) {
+                metadata = await this.loadVolumeinfoMetadata(volumeinfoFile);
+            } else {
+                throw new Error('No metadata file provided (JSON or volumeinfo)');
+            }
+
+            // Calculate expected file size
+            const [nx, ny, nz] = metadata.dimensions;
+            const bytesPerVoxel = this.getBytesPerVoxel(metadata.dataType);
+            const expectedSize = nx * ny * nz * bytesPerVoxel;
+
+            // Use streaming mode for very large files (>1GB)
+            const STREAMING_THRESHOLD = 1024 * 1024 * 1024; // 1GB
+
+            const loader = new ProgressiveVolumeLoader();
+
+            if (expectedSize > STREAMING_THRESHOLD) {
+                // Streaming mode: never load full data into memory
+                console.log(`Using streaming mode for ${(expectedSize / (1024*1024*1024)).toFixed(2)} GB volume`);
+                if (callbacks.onProgress) callbacks.onProgress({ stage: 'streaming', progress: 0 });
+
+                const progressiveData = await loader.loadProgressive(null, metadata, callbacks, rawFile);
+
+                if (callbacks.onProgress) callbacks.onProgress({ stage: 'complete', progress: 100 });
+                return progressiveData;
+            } else {
+                // Standard mode: load full data into memory
+                if (callbacks.onProgress) callbacks.onProgress({ stage: 'loading', progress: 0 });
+                const arrayBuffer = await this.loadRAWFile(rawFile);
+
+                if (callbacks.onProgress) callbacks.onProgress({ stage: 'processing', progress: 50 });
+                const progressiveData = await loader.loadProgressive(arrayBuffer, metadata, callbacks, null);
+
+                if (callbacks.onProgress) callbacks.onProgress({ stage: 'complete', progress: 100 });
+                return progressiveData;
+            }
+
+        } catch (error) {
+            throw new Error(`Failed to load 3D volume progressively: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get bytes per voxel for a data type
+     */
+    getBytesPerVoxel(dataType) {
+        switch (dataType.toLowerCase()) {
+            case 'uint8': return 1;
+            case 'uint16': return 2;
+            case 'float':
+            case 'float32': return 4;
+            default: return 4;
         }
     }
 

@@ -264,44 +264,169 @@ class ImageViewer {
             // Show loading indicator
             this.showLoadingIndicator('Loading 3D volume...');
 
-            // Load the volume using FileParser
-            const volumeData = await this.fileParser.load3DVolume(
-                fileGroup.rawFile,
-                fileGroup.jsonFile,
-                (progress) => {
-                    this.updateLoadingProgress(progress);
-                },
-                fileGroup.volumeinfoFile
-            );
+            // Use progressive loading for large files (>50MB)
+            const PROGRESSIVE_THRESHOLD = 50 * 1024 * 1024;
+            const useProgressive = fileGroup.rawFile.size > PROGRESSIVE_THRESHOLD;
 
-            // Switch to CT mode
-            this.switchToCTMode();
-
-            // Load volume into CT viewer
-            const info = this.ctViewer.loadVolume(volumeData);
-
-            // Initialize histogram with volume data
-            if (this.histogram) {
-                this.histogram.setVolume(volumeData);
+            if (useProgressive) {
+                await this.loadCTVolumeProgressive(fileGroup);
+            } else {
+                await this.loadCTVolumeDirect(fileGroup);
             }
-
-            // Update UI
-            this.fileName.textContent = fileGroup.name;
-            this.imageInfo.textContent = `${info.dimensions[0]}×${info.dimensions[1]}×${info.dimensions[2]} | ${info.dataType}`;
-
-            // Initialize slice indicators
-            const [nx, ny, nz] = info.dimensions;
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
-
-            // Hide loading indicator
-            this.hideLoadingIndicator();
 
         } catch (error) {
             this.hideLoadingIndicator();
             throw error;
         }
+    }
+
+    /**
+     * Load volume directly (for smaller files)
+     */
+    async loadCTVolumeDirect(fileGroup) {
+        const volumeData = await this.fileParser.load3DVolume(
+            fileGroup.rawFile,
+            fileGroup.jsonFile,
+            (progress) => {
+                this.updateLoadingProgress(progress);
+            },
+            fileGroup.volumeinfoFile
+        );
+
+        // Switch to CT mode
+        this.switchToCTMode();
+
+        // Load volume into CT viewer
+        const info = this.ctViewer.loadVolume(volumeData);
+
+        // Initialize histogram with volume data
+        if (this.histogram) {
+            this.histogram.setVolume(volumeData);
+        }
+
+        // Update UI
+        this.fileName.textContent = fileGroup.name;
+        this.imageInfo.textContent = `${info.dimensions[0]}×${info.dimensions[1]}×${info.dimensions[2]} | ${info.dataType}`;
+
+        // Initialize slice indicators
+        const [nx, ny, nz] = info.dimensions;
+        this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+        this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+        this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+
+        // Hide loading indicator
+        this.hideLoadingIndicator();
+    }
+
+    /**
+     * Load volume progressively with Z-axis tiling (for larger files)
+     */
+    async loadCTVolumeProgressive(fileGroup) {
+        console.log('Using progressive loading for large volume');
+
+        // Switch to CT mode early so views are ready
+        this.switchToCTMode();
+
+        // Reference to store progressive data when it's created
+        let progressiveData = null;
+
+        // Create callbacks
+        const callbacks = {
+            onProgress: (progress) => {
+                this.updateLoadingProgress(progress);
+            },
+            onLowResReady: (lowResVolume, progData) => {
+                // Store reference to progressive data
+                progressiveData = progData;
+                this.ctViewer.progressiveVolume = progData;
+                this.ctViewer.volumeData = progData;
+
+                // Set up callbacks for streaming mode to re-render when slices load
+                if (progData.isStreaming) {
+                    // XY slice ready callback
+                    progData.onSliceReady = (z) => {
+                        // Only re-render if this is near the current slice
+                        const currentZ = this.ctViewer.state.slices.xy;
+                        if (Math.abs(z - currentZ) <= 2) {
+                            this.ctViewer.renderView('xy');
+                            if (this.ctViewer.crosshairEnabled) {
+                                this.ctViewer.drawCrosshairs();
+                            }
+                        }
+                    };
+
+                    // XZ slice ready callback
+                    progData.onXZSliceReady = (y) => {
+                        const currentY = this.ctViewer.state.slices.xz;
+                        if (y === currentY) {
+                            this.ctViewer.renderView('xz');
+                            if (this.ctViewer.crosshairEnabled) {
+                                this.ctViewer.drawCrosshairs();
+                            }
+                        }
+                    };
+
+                    // YZ slice ready callback
+                    progData.onYZSliceReady = (x) => {
+                        const currentX = this.ctViewer.state.slices.yz;
+                        if (x === currentX) {
+                            this.ctViewer.renderView('yz');
+                            if (this.ctViewer.crosshairEnabled) {
+                                this.ctViewer.drawCrosshairs();
+                            }
+                        }
+                    };
+                }
+
+                // Update UI immediately with low-res preview
+                this.fileName.textContent = fileGroup.name + ' (loading...)';
+
+                const dims = progData.dimensions;
+                this.imageInfo.textContent = `${dims[0]}×${dims[1]}×${dims[2]} | Progressive`;
+
+                // Initialize slice indicators
+                const [nx, ny, nz] = dims;
+                this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+                this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+                this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+
+                // Initialize histogram with progressive data
+                if (this.histogram) {
+                    this.histogram.setVolume(progData);
+                }
+
+                // Hide loading indicator - user can interact now
+                this.hideLoadingIndicator();
+
+                // Call CTViewer's handler
+                this.ctViewer.handleLowResReady(lowResVolume);
+            },
+            onBlockReady: (blockIndex, zStart, zEnd) => {
+                // Call CTViewer's handler
+                this.ctViewer.handleBlockReady(blockIndex, zStart, zEnd);
+            },
+            onAllBlocksReady: () => {
+                // Update UI to show loading complete
+                this.fileName.textContent = fileGroup.name;
+
+                const dims = progressiveData.dimensions;
+                const dataType = progressiveData.dataType;
+                this.imageInfo.textContent = `${dims[0]}×${dims[1]}×${dims[2]} | ${dataType}`;
+
+                // Call CTViewer's handler
+                this.ctViewer.handleAllBlocksReady();
+
+                console.log('Progressive loading complete');
+            }
+        };
+
+        // Start progressive loading
+        await this.fileParser.load3DVolumeProgressive(
+            fileGroup.rawFile,
+            fileGroup.jsonFile,
+            callbacks,
+            fileGroup.volumeinfoFile
+        );
     }
 
     async loadTIFF(fileGroup) {
@@ -506,8 +631,10 @@ class ImageViewer {
                 progressEl.textContent = 'Loading metadata...';
             } else if (progress.stage === 'loading') {
                 progressEl.textContent = 'Loading volume data...';
-            } else if (progress.stage === 'parsing') {
-                progressEl.textContent = 'Parsing volume data...';
+            } else if (progress.stage === 'streaming') {
+                progressEl.textContent = 'Streaming mode: Creating preview...';
+            } else if (progress.stage === 'parsing' || progress.stage === 'processing') {
+                progressEl.textContent = 'Processing volume data...';
             } else if (progress.stage === 'complete') {
                 progressEl.textContent = 'Complete!';
             }
