@@ -86,6 +86,9 @@ class VolumeRenderer3D {
         this.offscreenCanvas = document.createElement('canvas');
         this.offscreenCtx = this.offscreenCanvas.getContext('2d');
         this.imageData = null;
+        // Track offscreen canvas size to avoid unnecessary resizes
+        this.offscreenWidth = 0;
+        this.offscreenHeight = 0;
     }
 
     /**
@@ -138,16 +141,19 @@ class VolumeRenderer3D {
     updateDisplaySize() {
         const container = this.canvas.parentElement;
         const maxSize = 2048;
+        let newSize = this.displaySize;
 
         if (container) {
             const rect = container.getBoundingClientRect();
             const dpr = Math.min(window.devicePixelRatio || 1, 2);
             // Use the smaller dimension to maintain square aspect for 3D view
             const size = Math.min(rect.width, rect.height);
-            this.displaySize = Math.min(Math.floor(size * dpr), maxSize);
+            newSize = Math.min(Math.floor(size * dpr), maxSize);
         }
 
-        if (this.canvas.width !== this.displaySize || this.canvas.height !== this.displaySize) {
+        // Only update if size actually changed - avoids GPU texture reallocation
+        if (newSize !== this.displaySize) {
+            this.displaySize = newSize;
             this.canvas.width = this.displaySize;
             this.canvas.height = this.displaySize;
         }
@@ -160,21 +166,37 @@ class VolumeRenderer3D {
         this.volumeData = volumeData;
 
         if (this.useWebGL) {
-            const success = this.webglRenderer.uploadVolume(volumeData);
+            // Check GPU memory before attempting upload
+            const memCheck = WebGLUtils.checkGPUMemory(
+                this.gl,
+                volumeData.dimensions,
+                volumeData.dataType
+            );
+
+            if (memCheck.recommendation) {
+                console.warn('GPU Memory:', memCheck.recommendation);
+                // Dispatch event for UI to show warning
+                document.dispatchEvent(new CustomEvent('gpumemorywarning', {
+                    detail: {
+                        message: memCheck.recommendation,
+                        memoryInfo: memCheck.memoryInfo,
+                        severity: memCheck.memoryInfo.warning || 'info'
+                    }
+                }));
+            }
+
+            let success = false;
+            try {
+                success = this.webglRenderer.uploadVolume(volumeData);
+            } catch (e) {
+                console.error('WebGL texture upload threw exception:', e);
+                success = false;
+            }
+
             if (!success) {
                 // Fall back to CPU if texture upload fails
                 console.warn('WebGL texture upload failed, falling back to CPU');
-                this.useWebGL = false;
-                this.ctx = this.canvas.getContext('2d');
-                this.raycaster = new MIPRaycaster();
-                this.initRenderBuffers();
-                this.raycaster.setVolume(volumeData);
-                // Update quality presets to CPU values
-                this.qualityPresets = {
-                    low: { resolution: 64, numSteps: 64, stepSize: 2.0 },
-                    medium: { resolution: 128, numSteps: 128, stepSize: 1.0 },
-                    high: { resolution: 256, numSteps: 256, stepSize: 0.5 }
-                };
+                this.fallbackToCPU(volumeData);
             }
         } else {
             this.raycaster.setVolume(volumeData);
@@ -189,6 +211,30 @@ class VolumeRenderer3D {
 
         // Initial render at medium quality
         this.renderAtQuality('medium');
+    }
+
+    /**
+     * Fall back to CPU rendering
+     */
+    fallbackToCPU(volumeData) {
+        this.useWebGL = false;
+        this.ctx = this.canvas.getContext('2d');
+        this.raycaster = new MIPRaycaster();
+        this.initRenderBuffers();
+        if (volumeData) {
+            this.raycaster.setVolume(volumeData);
+        }
+        // Update quality presets to CPU values
+        this.qualityPresets = {
+            low: { resolution: 64, numSteps: 64, stepSize: 2.0 },
+            medium: { resolution: 128, numSteps: 128, stepSize: 1.0 },
+            high: { resolution: 256, numSteps: 256, stepSize: 0.5 }
+        };
+
+        // Dispatch event for UI
+        document.dispatchEvent(new CustomEvent('rendererfallback', {
+            detail: { reason: 'WebGL failed, using CPU rendering' }
+        }));
     }
 
     /**
@@ -264,43 +310,76 @@ class VolumeRenderer3D {
      * Render using WebGL
      */
     renderWebGL() {
-        this.webglRenderer.render(this.camera);
-        // Note: WebGL renders directly to canvas, no label overlay in WebGL mode
-        // Could add a 2D overlay canvas for labels if needed
+        try {
+            this.webglRenderer.render(this.camera);
+            // Note: WebGL renders directly to canvas, no label overlay in WebGL mode
+            // Could add a 2D overlay canvas for labels if needed
+        } catch (e) {
+            console.error('WebGL render error:', e);
+            // Fall back to CPU rendering
+            if (!this.contextLost) {
+                console.warn('WebGL render failed, attempting CPU fallback');
+                this.fallbackToCPU(this.volumeData);
+                this.renderCPU();
+            }
+        }
     }
 
     /**
      * Render using CPU raycaster
      */
     renderCPU() {
-        // Set up offscreen canvas at render resolution
-        this.offscreenCanvas.width = this.renderResolution;
-        this.offscreenCanvas.height = this.renderResolution;
+        try {
+            // Only resize offscreen canvas when resolution changes
+            if (this.offscreenWidth !== this.renderResolution ||
+                this.offscreenHeight !== this.renderResolution) {
+                this.offscreenCanvas.width = this.renderResolution;
+                this.offscreenCanvas.height = this.renderResolution;
+                this.offscreenWidth = this.renderResolution;
+                this.offscreenHeight = this.renderResolution;
+                // Force new ImageData after resize
+                this.imageData = null;
+            }
 
-        // Create ImageData for raycaster output
-        this.imageData = this.offscreenCtx.createImageData(
-            this.renderResolution,
-            this.renderResolution
-        );
+            // Reuse ImageData when possible
+            if (!this.imageData ||
+                this.imageData.width !== this.renderResolution ||
+                this.imageData.height !== this.renderResolution) {
+                this.imageData = this.offscreenCtx.createImageData(
+                    this.renderResolution,
+                    this.renderResolution
+                );
+            }
 
-        // Perform raycasting
-        this.raycaster.render(this.imageData, this.camera, this.settings);
+            // Perform raycasting
+            this.raycaster.render(this.imageData, this.camera, this.settings);
 
-        // Put rendered image to offscreen canvas
-        this.offscreenCtx.putImageData(this.imageData, 0, 0);
+            // Put rendered image to offscreen canvas
+            this.offscreenCtx.putImageData(this.imageData, 0, 0);
 
-        // Scale up to display canvas with smoothing disabled for crisp pixels
-        this.ctx.imageSmoothingEnabled = false;
-        this.ctx.fillStyle = '#0a0a0a';
-        this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
-        this.ctx.drawImage(
-            this.offscreenCanvas,
-            0, 0, this.renderResolution, this.renderResolution,
-            0, 0, this.displaySize, this.displaySize
-        );
+            // Scale up to display canvas with smoothing disabled for crisp pixels
+            this.ctx.imageSmoothingEnabled = false;
+            this.ctx.fillStyle = '#0a0a0a';
+            this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
+            this.ctx.drawImage(
+                this.offscreenCanvas,
+                0, 0, this.renderResolution, this.renderResolution,
+                0, 0, this.displaySize, this.displaySize
+            );
 
-        // Draw label
-        this.drawLabel();
+            // Draw label
+            this.drawLabel();
+        } catch (e) {
+            console.error('CPU render error (possible GPU issue with canvas):', e);
+            // Try to show error message
+            try {
+                this.ctx.fillStyle = '#333';
+                this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
+                this.ctx.fillStyle = '#f00';
+                this.ctx.font = '14px sans-serif';
+                this.ctx.fillText('Render error', 10, 30);
+            } catch (e2) { /* ignore */ }
+        }
     }
 
     /**
@@ -530,5 +609,41 @@ class VolumeRenderer3D {
      */
     isUsingWebGL() {
         return this.useWebGL;
+    }
+
+    /**
+     * Clean up GPU resources
+     */
+    dispose() {
+        // Cancel any pending renders
+        if (this.refineTimer) {
+            clearTimeout(this.refineTimer);
+            this.refineTimer = null;
+        }
+
+        // Clean up WebGL resources
+        if (this.webglRenderer) {
+            this.webglRenderer.dispose();
+            this.webglRenderer = null;
+        }
+
+        // Clean up CPU rendering resources
+        if (this.offscreenCanvas) {
+            this.offscreenCanvas.width = 1;
+            this.offscreenCanvas.height = 1;
+            this.offscreenCanvas = null;
+            this.offscreenCtx = null;
+        }
+
+        this.imageData = null;
+        this.volumeData = null;
+        this.volumeLoaded = false;
+
+        // Clear the main canvas
+        if (this.ctx) {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        } else if (this.gl) {
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        }
     }
 }

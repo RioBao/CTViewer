@@ -86,74 +86,95 @@ class WebGLMIPRenderer {
             return false;
         }
 
-        // Delete existing texture
-        if (this.volumeTexture) {
-            gl.deleteTexture(this.volumeTexture);
-        }
+        try {
+            // Delete existing texture
+            if (this.volumeTexture) {
+                gl.deleteTexture(this.volumeTexture);
+                this.volumeTexture = null;
+            }
 
-        // Create 3D texture
-        this.volumeTexture = gl.createTexture();
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_3D, this.volumeTexture);
+            // Create 3D texture
+            this.volumeTexture = gl.createTexture();
+            if (!this.volumeTexture) {
+                console.error('Failed to create WebGL texture');
+                return false;
+            }
 
-        // Set texture parameters
-        // Note: R32F textures require NEAREST filtering unless OES_texture_float_linear is available
-        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_3D, this.volumeTexture);
 
-        // Determine format and prepare data based on type
-        let internalFormat, format, type, data;
-        const dataType = volumeData.dataType.toLowerCase();
+            // Set texture parameters
+            // Note: R32F textures require NEAREST filtering unless OES_texture_float_linear is available
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-        if (dataType === 'uint8') {
-            // uint8: Direct upload as R8
-            internalFormat = gl.R8;
-            format = gl.RED;
-            type = gl.UNSIGNED_BYTE;
-            data = volumeData.data;
-        } else {
-            // uint16 and float32: Normalize to float32 [0,1]
-            internalFormat = gl.R32F;
-            format = gl.RED;
-            type = gl.FLOAT;
-            data = this.normalizeToFloat32(volumeData.data, volumeData.min, volumeData.max);
-        }
+            // Determine format and prepare data based on type
+            let internalFormat, format, type, data;
+            const dataType = volumeData.dataType.toLowerCase();
 
-        // Upload texture data
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        gl.texImage3D(
-            gl.TEXTURE_3D,
-            0,              // mip level
-            internalFormat,
-            nx, ny, nz,
-            0,              // border
-            format,
-            type,
-            data
-        );
+            if (dataType === 'uint8') {
+                // uint8: Direct upload as R8
+                internalFormat = gl.R8;
+                format = gl.RED;
+                type = gl.UNSIGNED_BYTE;
+                data = volumeData.data;
+            } else {
+                // uint16 and float32: Normalize to float32 [0,1]
+                internalFormat = gl.R32F;
+                format = gl.RED;
+                type = gl.FLOAT;
+                data = this.normalizeToFloat32(volumeData.data, volumeData.min, volumeData.max);
+            }
 
-        // Check for WebGL errors
-        const error = gl.getError();
-        if (error !== gl.NO_ERROR) {
-            console.error('WebGL error after texture upload:', error);
+            // Upload texture data
+            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+            gl.texImage3D(
+                gl.TEXTURE_3D,
+                0,              // mip level
+                internalFormat,
+                nx, ny, nz,
+                0,              // border
+                format,
+                type,
+                data
+            );
+
+            // Check for WebGL errors
+            const error = gl.getError();
+            if (error !== gl.NO_ERROR) {
+                console.error('WebGL error after texture upload:', error);
+                // Clean up failed texture
+                gl.deleteTexture(this.volumeTexture);
+                this.volumeTexture = null;
+                return false;
+            }
+
+            console.log(`WebGL: Volume texture uploaded ${nx}x${ny}x${nz}`);
+
+            // Store dimensions and mark as loaded
+            this.volumeDimensions = [nx, ny, nz];
+            this.volumeLoaded = true;
+
+            // Reset display range to full for uint8 (already normalized in shader)
+            // For normalized data, displayMin/Max are in [0,1]
+            this.displayMin = 0.0;
+            this.displayMax = 1.0;
+
+            return true;
+        } catch (e) {
+            console.error('Exception during WebGL texture upload:', e);
+            // Clean up on exception
+            if (this.volumeTexture) {
+                try {
+                    gl.deleteTexture(this.volumeTexture);
+                } catch (e2) { /* ignore */ }
+                this.volumeTexture = null;
+            }
             return false;
         }
-
-        console.log(`WebGL: Volume texture uploaded ${nx}x${ny}x${nz}`);
-
-        // Store dimensions and mark as loaded
-        this.volumeDimensions = [nx, ny, nz];
-        this.volumeLoaded = true;
-
-        // Reset display range to full for uint8 (already normalized in shader)
-        // For normalized data, displayMin/Max are in [0,1]
-        this.displayMin = 0.0;
-        this.displayMax = 1.0;
-
-        return true;
     }
 
     /**
@@ -225,50 +246,67 @@ class WebGLMIPRenderer {
 
         const gl = this.gl;
 
-        // Update viewport to match canvas size
-        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        // Check for context loss
+        if (gl.isContextLost()) {
+            console.warn('WebGL context is lost, skipping render');
+            return;
+        }
 
-        // Clear
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        try {
+            // Update viewport to match canvas size
+            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
-        // Use program
-        gl.useProgram(this.program);
+            // Clear
+            gl.clear(gl.COLOR_BUFFER_BIT);
 
-        // Bind VAO (even though empty, required in WebGL2)
-        gl.bindVertexArray(this.vao);
+            // Use program
+            gl.useProgram(this.program);
 
-        // Bind volume texture
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_3D, this.volumeTexture);
-        gl.uniform1i(this.uniforms.uVolume, 0);
+            // Bind VAO (even though empty, required in WebGL2)
+            gl.bindVertexArray(this.vao);
 
-        // Set camera uniforms (convert degrees to radians)
-        gl.uniform1f(this.uniforms.uAzimuth, camera.azimuth * Math.PI / 180);
-        gl.uniform1f(this.uniforms.uElevation, camera.elevation * Math.PI / 180);
-        gl.uniform1f(this.uniforms.uDistance, camera.distance);
+            // Bind volume texture
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_3D, this.volumeTexture);
+            gl.uniform1i(this.uniforms.uVolume, 0);
 
-        // Set volume dimensions
-        gl.uniform3f(
-            this.uniforms.uDimensions,
-            this.volumeDimensions[0],
-            this.volumeDimensions[1],
-            this.volumeDimensions[2]
-        );
+            // Set camera uniforms (convert degrees to radians)
+            gl.uniform1f(this.uniforms.uAzimuth, camera.azimuth * Math.PI / 180);
+            gl.uniform1f(this.uniforms.uElevation, camera.elevation * Math.PI / 180);
+            gl.uniform1f(this.uniforms.uDistance, camera.distance);
 
-        // Set display parameters
-        gl.uniform1f(this.uniforms.uDisplayMin, this.displayMin);
-        gl.uniform1f(this.uniforms.uDisplayMax, this.displayMax);
-        gl.uniform1f(this.uniforms.uGamma, this.gamma);
+            // Set volume dimensions
+            gl.uniform3f(
+                this.uniforms.uDimensions,
+                this.volumeDimensions[0],
+                this.volumeDimensions[1],
+                this.volumeDimensions[2]
+            );
 
-        // Set ray marching parameters
-        gl.uniform1f(this.uniforms.uStepSize, this.stepSize);
-        gl.uniform1i(this.uniforms.uNumSteps, this.numSteps);
+            // Set display parameters
+            gl.uniform1f(this.uniforms.uDisplayMin, this.displayMin);
+            gl.uniform1f(this.uniforms.uDisplayMax, this.displayMax);
+            gl.uniform1f(this.uniforms.uGamma, this.gamma);
 
-        // Draw full-screen quad (6 vertices, 2 triangles)
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+            // Set ray marching parameters
+            gl.uniform1f(this.uniforms.uStepSize, this.stepSize);
+            gl.uniform1i(this.uniforms.uNumSteps, this.numSteps);
 
-        // Unbind
-        gl.bindVertexArray(null);
+            // Draw full-screen quad (6 vertices, 2 triangles)
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            // Unbind
+            gl.bindVertexArray(null);
+
+            // Check for errors after render
+            const error = gl.getError();
+            if (error !== gl.NO_ERROR) {
+                console.warn('WebGL error during render:', error);
+            }
+        } catch (e) {
+            console.error('Exception during WebGL render:', e);
+            throw e; // Re-throw to trigger fallback in VolumeRenderer3D
+        }
     }
 
     /**

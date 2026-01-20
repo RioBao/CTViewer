@@ -17,6 +17,22 @@ class SliceRenderer {
         // Data range for normalization
         this.dataMin = 0;
         this.dataMax = 255;
+
+        // Cached temp canvas for GPU-friendly rendering
+        // Only recreate when slice dimensions change
+        this.tempCanvas = null;
+        this.tempCtx = null;
+        this.tempCanvasWidth = 0;
+        this.tempCanvasHeight = 0;
+
+        // Cached ImageData to avoid reallocations
+        this.cachedImageData = null;
+        this.cachedImageDataWidth = 0;
+        this.cachedImageDataHeight = 0;
+
+        // Track last canvas dimensions to avoid unnecessary resizes
+        this.lastDisplayWidth = 0;
+        this.lastDisplayHeight = 0;
     }
 
     /**
@@ -67,57 +83,100 @@ class SliceRenderer {
             displayHeight = Math.min(Math.floor(rect.height * dpr), maxSize);
         }
 
-        if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
+        // Only resize main canvas when dimensions actually change
+        // This avoids GPU texture reallocation on every frame
+        if (this.lastDisplayWidth !== displayWidth || this.lastDisplayHeight !== displayHeight) {
             this.canvas.width = displayWidth;
             this.canvas.height = displayHeight;
+            this.lastDisplayWidth = displayWidth;
+            this.lastDisplayHeight = displayHeight;
         }
 
-        // Create ImageData
-        const imageData = this.ctx.createImageData(sliceData.width, sliceData.height);
+        // Reuse or create ImageData - only reallocate when slice dimensions change
+        if (this.cachedImageDataWidth !== sliceData.width ||
+            this.cachedImageDataHeight !== sliceData.height) {
+            try {
+                this.cachedImageData = this.ctx.createImageData(sliceData.width, sliceData.height);
+                this.cachedImageDataWidth = sliceData.width;
+                this.cachedImageDataHeight = sliceData.height;
+            } catch (e) {
+                console.error('Failed to create ImageData:', e);
+                return;
+            }
+        }
 
-        // Convert slice data to RGBA
-        this.sliceDataToImageData(sliceData.data, imageData, imageProcessor);
+        // Convert slice data to RGBA (reuses cached ImageData)
+        this.sliceDataToImageData(sliceData.data, this.cachedImageData, imageProcessor);
 
-        // Create a temporary canvas to hold the ImageData
-        // We need this because putImageData ignores transforms
+        // Reuse temp canvas - only resize when slice dimensions change
+        // This prevents GPU texture reallocation on every frame
         if (!this.tempCanvas) {
             this.tempCanvas = document.createElement('canvas');
+            this.tempCtx = null;
         }
-        this.tempCanvas.width = sliceData.width;
-        this.tempCanvas.height = sliceData.height;
-        const tempCtx = this.tempCanvas.getContext('2d');
-        tempCtx.putImageData(imageData, 0, 0);
 
-        // Clear and draw with transforms
-        this.ctx.save();
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (this.tempCanvasWidth !== sliceData.width || this.tempCanvasHeight !== sliceData.height) {
+            this.tempCanvas.width = sliceData.width;
+            this.tempCanvas.height = sliceData.height;
+            this.tempCanvasWidth = sliceData.width;
+            this.tempCanvasHeight = sliceData.height;
+            // Force new context after resize
+            this.tempCtx = null;
+        }
 
-        // Calculate scale to fit image in canvas (maintaining aspect ratio)
-        const scaleX = this.canvas.width / sliceData.width;
-        const scaleY = this.canvas.height / sliceData.height;
-        const baseScale = Math.min(scaleX, scaleY);
+        // Cache the temp context to avoid repeated getContext calls
+        if (!this.tempCtx) {
+            this.tempCtx = this.tempCanvas.getContext('2d');
+        }
 
-        // Calculate centered position
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
+        // Wrap GPU operations in try/catch
+        try {
+            this.tempCtx.putImageData(this.cachedImageData, 0, 0);
 
-        // Calculate scaled dimensions
-        const scaledWidth = sliceData.width * baseScale;
-        const scaledHeight = sliceData.height * baseScale;
+            // Clear and draw with transforms
+            this.ctx.save();
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Apply transforms: translate to center, apply zoom and pan, translate back
-        this.ctx.translate(centerX + this.pan.x, centerY + this.pan.y);
-        this.ctx.scale(this.zoom, this.zoom);
-        this.ctx.translate(-scaledWidth / 2, -scaledHeight / 2);
+            // Calculate scale to fit image in canvas (maintaining aspect ratio)
+            const scaleX = this.canvas.width / sliceData.width;
+            const scaleY = this.canvas.height / sliceData.height;
+            const baseScale = Math.min(scaleX, scaleY);
 
-        // Draw the image with base scaling (this respects transforms)
-        this.ctx.drawImage(this.tempCanvas, 0, 0, sliceData.width, sliceData.height,
-                          0, 0, scaledWidth, scaledHeight);
+            // Calculate centered position
+            const centerX = this.canvas.width / 2;
+            const centerY = this.canvas.height / 2;
 
-        this.ctx.restore();
+            // Calculate scaled dimensions
+            const scaledWidth = sliceData.width * baseScale;
+            const scaledHeight = sliceData.height * baseScale;
 
-        // Draw label
-        this.drawLabel();
+            // Apply transforms: translate to center, apply zoom and pan, translate back
+            this.ctx.translate(centerX + this.pan.x, centerY + this.pan.y);
+            this.ctx.scale(this.zoom, this.zoom);
+            this.ctx.translate(-scaledWidth / 2, -scaledHeight / 2);
+
+            // Draw the image with base scaling (this respects transforms)
+            this.ctx.drawImage(this.tempCanvas, 0, 0, sliceData.width, sliceData.height,
+                              0, 0, scaledWidth, scaledHeight);
+
+            this.ctx.restore();
+
+            // Draw label
+            this.drawLabel();
+        } catch (e) {
+            console.error('Canvas rendering error (possible GPU issue):', e);
+            // Attempt recovery by clearing and showing error
+            try {
+                this.ctx.restore();
+                this.ctx.fillStyle = '#333';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.fillStyle = '#f00';
+                this.ctx.font = '14px sans-serif';
+                this.ctx.fillText('Render error - try disabling GPU acceleration', 10, 30);
+            } catch (e2) {
+                // Context completely dead
+            }
+        }
     }
 
     /**

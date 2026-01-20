@@ -895,29 +895,33 @@ class CTViewer {
 
         const { x, y } = canvasCoords;
 
-        ctx.save();
-        ctx.strokeStyle = '#ffff00';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([]);
+        try {
+            ctx.save();
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 1;
+            // Avoid setLineDash - known to cause GPU issues in Edge
+            // ctx.setLineDash([]) is implicit when lineDash is not set
 
-        // Draw horizontal line
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
+            // Draw all lines in a single path to reduce GPU state changes
+            ctx.beginPath();
+            // Horizontal line
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            // Vertical line
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
 
-        // Draw vertical line
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
+            // Draw small circle at intersection (separate path for arc)
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.stroke();
 
-        // Draw small circle at intersection
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, 2 * Math.PI);
-        ctx.stroke();
-
-        ctx.restore();
+            ctx.restore();
+        } catch (e) {
+            // GPU operation failed - silently ignore crosshair drawing
+            try { ctx.restore(); } catch (e2) { /* ignore */ }
+        }
     }
 
     /**
@@ -991,30 +995,35 @@ class CTViewer {
         if (!this.roiCanvas) return;
 
         const ctx = this.roiCanvas.getContext('2d');
-        ctx.clearRect(0, 0, this.roiCanvas.width, this.roiCanvas.height);
 
-        // Convert client coordinates to overlay canvas coordinates
-        // The overlay canvas matches the displayed size, not the internal canvas size
-        const rect = targetCanvas.getBoundingClientRect();
-        const x1 = this.roiStart.x - rect.left;
-        const y1 = this.roiStart.y - rect.top;
-        const x2 = this.roiEnd.x - rect.left;
-        const y2 = this.roiEnd.y - rect.top;
+        try {
+            ctx.clearRect(0, 0, this.roiCanvas.width, this.roiCanvas.height);
 
-        const x = Math.min(x1, x2);
-        const y = Math.min(y1, y2);
-        const width = Math.abs(x2 - x1);
-        const height = Math.abs(y2 - y1);
+            // Convert client coordinates to overlay canvas coordinates
+            // The overlay canvas matches the displayed size, not the internal canvas size
+            const rect = targetCanvas.getBoundingClientRect();
+            const x1 = this.roiStart.x - rect.left;
+            const y1 = this.roiStart.y - rect.top;
+            const x2 = this.roiEnd.x - rect.left;
+            const y2 = this.roiEnd.y - rect.top;
 
-        // Draw rectangle
-        ctx.strokeStyle = '#00ff00';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
-        ctx.strokeRect(x, y, width, height);
+            const x = Math.min(x1, x2);
+            const y = Math.min(y1, y2);
+            const width = Math.abs(x2 - x1);
+            const height = Math.abs(y2 - y1);
 
-        // Draw semi-transparent fill
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
-        ctx.fillRect(x, y, width, height);
+            // Draw semi-transparent fill first
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+            ctx.fillRect(x, y, width, height);
+
+            // Draw rectangle border - avoid setLineDash for GPU compatibility
+            // Use double-line technique instead of dashed line
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#00ff00';
+            ctx.strokeRect(x, y, width, height);
+        } catch (e) {
+            // GPU operation failed - silently ignore
+        }
     }
 
     /**
@@ -1268,10 +1277,37 @@ class CTViewer {
      * Cleanup
      */
     dispose() {
+        // Cancel any pending renders
+        if (this.renderTimer) {
+            clearTimeout(this.renderTimer);
+            this.renderTimer = null;
+        }
+
         this.removeRoiOverlay();
+
+        // Clean up slice renderers
         Object.values(this.renderers).forEach(renderer => {
-            if (renderer) renderer.clearCanvas();
+            if (renderer) {
+                renderer.clearCanvas();
+                // Clean up cached resources
+                if (renderer.tempCanvas) {
+                    renderer.tempCanvas.width = 1;
+                    renderer.tempCanvas.height = 1;
+                    renderer.tempCanvas = null;
+                    renderer.tempCtx = null;
+                }
+                renderer.cachedImageData = null;
+            }
         });
+
+        // Clean up 3D renderer
+        if (this.renderer3D) {
+            this.renderer3D.dispose();
+            this.renderer3D = null;
+        }
+
         this.volumeData = null;
+        this.progressiveVolume = null;
+        this.lowResVolume = null;
     }
 }

@@ -119,5 +119,81 @@ const WebGLUtils = {
         return dimensions[0] <= maxSize &&
                dimensions[1] <= maxSize &&
                dimensions[2] <= maxSize;
+    },
+
+    /**
+     * Estimate GPU memory required for a volume texture
+     * @param {number[]} dimensions - [width, height, depth]
+     * @param {string} dataType - 'uint8', 'uint16', or 'float32'
+     * @returns {object} - { bytes, megabytes, gpuBytes, gpuMegabytes, warning }
+     */
+    estimateGPUMemory(dimensions, dataType) {
+        const [nx, ny, nz] = dimensions;
+        const voxelCount = nx * ny * nz;
+
+        // Source data size
+        let bytesPerVoxel = 1;
+        if (dataType === 'uint16') bytesPerVoxel = 2;
+        else if (dataType === 'float32') bytesPerVoxel = 4;
+        const sourceBytes = voxelCount * bytesPerVoxel;
+
+        // GPU texture size - uint8 stays as R8, but uint16/float32 become R32F
+        // R32F uses 4 bytes per voxel on GPU
+        let gpuBytesPerVoxel = 1;
+        if (dataType !== 'uint8') {
+            gpuBytesPerVoxel = 4; // R32F format
+        }
+        const gpuBytes = voxelCount * gpuBytesPerVoxel;
+
+        // Memory thresholds
+        const WARN_THRESHOLD = 512 * 1024 * 1024;  // 512 MB
+        const DANGER_THRESHOLD = 1024 * 1024 * 1024; // 1 GB
+
+        let warning = null;
+        if (gpuBytes > DANGER_THRESHOLD) {
+            warning = 'critical';
+        } else if (gpuBytes > WARN_THRESHOLD) {
+            warning = 'high';
+        }
+
+        return {
+            bytes: sourceBytes,
+            megabytes: (sourceBytes / (1024 * 1024)).toFixed(1),
+            gpuBytes: gpuBytes,
+            gpuMegabytes: (gpuBytes / (1024 * 1024)).toFixed(1),
+            warning: warning
+        };
+    },
+
+    /**
+     * Check GPU memory and return recommendation
+     * @param {WebGL2RenderingContext} gl
+     * @param {number[]} dimensions
+     * @param {string} dataType
+     * @returns {object} - { canLoad, recommendation, memoryInfo }
+     */
+    checkGPUMemory(gl, dimensions, dataType) {
+        const memInfo = this.estimateGPUMemory(dimensions, dataType);
+        const fitsTexture = this.volumeFitsInTexture(gl, dimensions);
+
+        let canLoad = fitsTexture;
+        let recommendation = null;
+
+        if (!fitsTexture) {
+            canLoad = false;
+            recommendation = 'Volume exceeds maximum texture size. Use CPU rendering.';
+        } else if (memInfo.warning === 'critical') {
+            canLoad = true; // Allow but warn
+            recommendation = `Volume requires ~${memInfo.gpuMegabytes}MB GPU memory. May cause instability on some systems. Consider using CPU rendering if you experience crashes.`;
+        } else if (memInfo.warning === 'high') {
+            canLoad = true;
+            recommendation = `Volume requires ~${memInfo.gpuMegabytes}MB GPU memory.`;
+        }
+
+        return {
+            canLoad,
+            recommendation,
+            memoryInfo: memInfo
+        };
     }
 };
