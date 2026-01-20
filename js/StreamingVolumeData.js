@@ -332,6 +332,8 @@ class StreamingVolumeData {
         const [nx, ny, nz] = this.dimensions;
         this.xzLoadInProgress = true;
         this.currentXZIndex = y;
+        // Clear cached slice to prevent returning stale data during load
+        this.currentXZSlice = null;
 
         try {
             const sliceData = new Float32Array(nx * nz);
@@ -440,6 +442,8 @@ class StreamingVolumeData {
         const [nx, ny, nz] = this.dimensions;
         this.yzLoadInProgress = true;
         this.currentYZIndex = x;
+        // Clear cached slice to prevent returning stale data during load
+        this.currentYZSlice = null;
 
         try {
             const sliceData = new Float32Array(ny * nz);

@@ -345,10 +345,10 @@ class ImageViewer {
                 if (progData.isStreaming) {
                     // XY slice ready callback
                     progData.onSliceReady = (z) => {
-                        // Only re-render if this is near the current slice
+                        // Only re-render if this is the current slice (exact match)
                         const currentZ = this.ctViewer.state.slices.xy;
-                        if (Math.abs(z - currentZ) <= 2) {
-                            this.ctViewer.renderView('xy');
+                        if (z === currentZ) {
+                            this.ctViewer.renderView('xy', z);
                             if (this.ctViewer.crosshairEnabled) {
                                 this.ctViewer.drawCrosshairs();
                             }
@@ -359,7 +359,7 @@ class ImageViewer {
                     progData.onXZSliceReady = (y) => {
                         const currentY = this.ctViewer.state.slices.xz;
                         if (y === currentY) {
-                            this.ctViewer.renderView('xz');
+                            this.ctViewer.renderView('xz', y);
                             if (this.ctViewer.crosshairEnabled) {
                                 this.ctViewer.drawCrosshairs();
                             }
@@ -370,7 +370,7 @@ class ImageViewer {
                     progData.onYZSliceReady = (x) => {
                         const currentX = this.ctViewer.state.slices.yz;
                         if (x === currentX) {
-                            this.ctViewer.renderView('yz');
+                            this.ctViewer.renderView('yz', x);
                             if (this.ctViewer.crosshairEnabled) {
                                 this.ctViewer.drawCrosshairs();
                             }

@@ -324,12 +324,15 @@ class CTViewer {
 
     /**
      * Render a specific view
+     * @param {string} axis - The axis to render ('xy', 'xz', 'yz')
+     * @param {number} [sliceIndex] - Optional slice index to render; if not provided, uses current state
      */
-    renderView(axis) {
+    renderView(axis, sliceIndex) {
         if (!this.volumeData || !this.renderers[axis]) return;
 
         try {
-            const slice = this.volumeData.getSlice(axis, this.state.slices[axis]);
+            const index = sliceIndex !== undefined ? sliceIndex : this.state.slices[axis];
+            const slice = this.volumeData.getSlice(axis, index);
             const params = {
                 zoom: this.state.zoom,
                 pan: this.state.pan,
