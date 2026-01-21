@@ -39,6 +39,7 @@ uniform sampler3D uVolume;
 uniform float uAzimuth;      // Horizontal rotation (radians)
 uniform float uElevation;    // Vertical rotation (radians)
 uniform float uDistance;     // Zoom factor (1.0 = fit)
+uniform vec2 uPan;           // Screen-space pan offset (normalized)
 
 // Volume dimensions for aspect ratio
 uniform vec3 uDimensions;
@@ -72,6 +73,9 @@ void main() {
 
     // Convert UV to centered coordinates [-1, 1]
     vec2 uv = (vUV - 0.5) * 2.0;
+
+    // Apply pan offset (in normalized screen space)
+    uv -= uPan;
 
     // Apply zoom (distance)
     uv /= uDistance;

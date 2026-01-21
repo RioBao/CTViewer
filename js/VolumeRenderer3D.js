@@ -65,8 +65,13 @@ class VolumeRenderer3D {
         this.renderResolution = this.qualityPresets.medium.resolution;
 
         // Interaction state
-        this.isDragging = false;
+        this.isTracking = false;       // Left button = track (rotate in 3D)
+        this.isPanning = false;        // Both buttons = pan (translate/reposition)
         this.lastMouse = { x: 0, y: 0 };
+        this.buttonsDown = { left: false, right: false };
+
+        // Pan offset (screen-space translation)
+        this.pan = { x: 0, y: 0 };
 
         // Progressive rendering
         this.refineTimer = null;
@@ -124,7 +129,8 @@ class VolumeRenderer3D {
         this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
         this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        this.canvas.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
+        this.canvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e));
+        this.canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent right-click menu
 
         // Wheel for zoom
         this.canvas.addEventListener('wheel', (e) => this.handleWheel(e));
@@ -314,7 +320,7 @@ class VolumeRenderer3D {
      */
     renderWebGL() {
         try {
-            this.webglRenderer.render(this.camera);
+            this.webglRenderer.render(this.camera, this.pan);
             // Note: WebGL renders directly to canvas, no label overlay in WebGL mode
             // Could add a 2D overlay canvas for labels if needed
         } catch (e) {
@@ -364,10 +370,11 @@ class VolumeRenderer3D {
             this.ctx.imageSmoothingEnabled = false;
             this.ctx.fillStyle = '#0a0a0a';
             this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
+            // Apply pan offset when drawing
             this.ctx.drawImage(
                 this.offscreenCanvas,
                 0, 0, this.renderResolution, this.renderResolution,
-                0, 0, this.displaySize, this.displaySize
+                this.pan.x, this.pan.y, this.displaySize, this.displaySize
             );
 
             // Draw label
@@ -405,29 +412,42 @@ class VolumeRenderer3D {
     handleMouseDown(e) {
         if (!this.volumeLoaded) return;
 
-        this.isDragging = true;
-        this.lastMouse = { x: e.clientX, y: e.clientY };
-        this.canvas.style.cursor = 'grabbing';
+        // Record which button was pressed
+        if (e.button === 0) this.buttonsDown.left = true;
+        if (e.button === 2) this.buttonsDown.right = true;
 
-        // Switch to low quality during interaction
-        this.startInteraction();
+        this.lastMouse = { x: e.clientX, y: e.clientY };
+        this.updateInteractionState();
     }
 
     handleMouseMove(e) {
-        if (!this.isDragging) return;
+        // Check actual button state from event (more reliable)
+        const leftDown = (e.buttons & 1) !== 0;
+        const rightDown = (e.buttons & 2) !== 0;
+        const bothDown = leftDown && rightDown;
+
+        if (!leftDown && !rightDown) return;
 
         const dx = e.clientX - this.lastMouse.x;
         const dy = e.clientY - this.lastMouse.y;
 
-        // Update camera angles
-        this.camera.azimuth += dx * 0.5;
-        this.camera.elevation += dy * 0.5;
+        if (bothDown) {
+            // Both buttons: pan (translate/reposition volume)
+            this.pan.x += dx;
+            this.pan.y += dy;
+            this.canvas.style.cursor = 'move';
+        } else if (leftDown) {
+            // Left button: track (rotate in 3D)
+            this.camera.azimuth += dx * 0.5;
+            this.camera.elevation += dy * 0.5;
 
-        // Clamp elevation to avoid gimbal lock
-        this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
+            // Clamp elevation to avoid gimbal lock
+            this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
 
-        // Normalize azimuth
-        this.camera.azimuth = this.camera.azimuth % 360;
+            // Normalize azimuth
+            this.camera.azimuth = this.camera.azimuth % 360;
+            this.canvas.style.cursor = 'grabbing';
+        }
 
         this.lastMouse = { x: e.clientX, y: e.clientY };
 
@@ -436,13 +456,53 @@ class VolumeRenderer3D {
     }
 
     handleMouseUp(e) {
-        if (!this.isDragging) return;
+        // Record which button was released
+        if (e.button === 0) this.buttonsDown.left = false;
+        if (e.button === 2) this.buttonsDown.right = false;
 
-        this.isDragging = false;
+        this.updateInteractionState();
+    }
+
+    handleMouseLeave(e) {
+        // Reset all button states when mouse leaves canvas
+        this.buttonsDown.left = false;
+        this.buttonsDown.right = false;
+        this.isTracking = false;
+        this.isPanning = false;
         this.canvas.style.cursor = 'grab';
-
-        // Schedule high quality render
         this.endInteraction();
+    }
+
+    /**
+     * Update interaction state based on current button states
+     */
+    updateInteractionState() {
+        const wasInteracting = this.isTracking || this.isPanning;
+
+        if (this.buttonsDown.left && this.buttonsDown.right) {
+            // Both buttons: pan
+            this.isPanning = true;
+            this.isTracking = false;
+            this.canvas.style.cursor = 'move';
+        } else if (this.buttonsDown.left) {
+            // Left button: track
+            this.isTracking = true;
+            this.isPanning = false;
+            this.canvas.style.cursor = 'grabbing';
+        } else {
+            this.isTracking = false;
+            this.isPanning = false;
+            this.canvas.style.cursor = 'grab';
+        }
+
+        const isInteracting = this.isTracking || this.isPanning;
+
+        // Start/end interaction for quality switching
+        if (isInteracting && !wasInteracting) {
+            this.startInteraction();
+        } else if (!isInteracting && wasInteracting) {
+            this.endInteraction();
+        }
     }
 
     handleWheel(e) {
@@ -469,13 +529,13 @@ class VolumeRenderer3D {
 
         e.preventDefault();
         const touch = e.touches[0];
-        this.isDragging = true;
+        this.isTracking = true;  // Single touch = track (rotate)
         this.lastMouse = { x: touch.clientX, y: touch.clientY };
         this.startInteraction();
     }
 
     handleTouchMove(e) {
-        if (!this.isDragging || e.touches.length !== 1) return;
+        if (!this.isTracking || e.touches.length !== 1) return;
 
         e.preventDefault();
         const touch = e.touches[0];
@@ -483,6 +543,7 @@ class VolumeRenderer3D {
         const dx = touch.clientX - this.lastMouse.x;
         const dy = touch.clientY - this.lastMouse.y;
 
+        // Track: rotate in 3D
         this.camera.azimuth += dx * 0.5;
         this.camera.elevation += dy * 0.5;
         this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
@@ -493,9 +554,9 @@ class VolumeRenderer3D {
     }
 
     handleTouchEnd(e) {
-        if (!this.isDragging) return;
+        if (!this.isTracking) return;
 
-        this.isDragging = false;
+        this.isTracking = false;
         this.endInteraction();
     }
 
@@ -588,6 +649,7 @@ class VolumeRenderer3D {
         this.camera.azimuth = 30;
         this.camera.elevation = 20;
         this.camera.distance = 1.0;
+        this.pan = { x: 0, y: 0 };
         this.renderAtQuality(this.currentQuality);
     }
 
