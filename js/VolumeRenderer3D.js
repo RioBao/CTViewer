@@ -42,7 +42,7 @@ class VolumeRenderer3D {
             this.qualityPresets = {
                 low: { resolution: 256, numSteps: 200, stepSize: 0.01 },
                 medium: { resolution: 1024, numSteps: 800, stepSize: 0.0025 },
-                high: { resolution: 2048, numSteps: 1600, stepSize: 0.00125 }
+                high: { resolution: 2048, numSteps: 3200, stepSize: 0.000625 }
             };
         } else {
             this.qualityPresets = {
@@ -195,7 +195,7 @@ class VolumeRenderer3D {
 
             if (!success) {
                 // Fall back to CPU if texture upload fails
-                console.warn('WebGL texture upload failed, falling back to CPU');
+                console.warn('%c3D Renderer: Falling back to CPU%c (WebGL texture upload failed)', 'color: #FF9800; font-weight: bold', 'color: inherit');
                 this.fallbackToCPU(volumeData);
             }
         } else {
@@ -203,6 +203,9 @@ class VolumeRenderer3D {
         }
 
         this.volumeLoaded = true;
+
+        // Log renderer info
+        this.logRendererInfo();
 
         // Reset camera to default view
         this.camera.azimuth = 30;
@@ -609,6 +612,31 @@ class VolumeRenderer3D {
      */
     isUsingWebGL() {
         return this.useWebGL;
+    }
+
+    /**
+     * Log renderer information to console
+     */
+    logRendererInfo() {
+        const renderer = this.useWebGL ? 'WebGL' : 'CPU';
+        const preset = this.qualityPresets[this.currentQuality];
+
+        console.log(
+            `%c3D Renderer: ${renderer}%c | Quality: ${this.currentQuality} | Resolution: ${preset.resolution}px | Steps: ${preset.numSteps}`,
+            'color: #4CAF50; font-weight: bold',
+            'color: inherit'
+        );
+
+        if (this.useWebGL && this.gl) {
+            const maxTextureSize = this.gl.getParameter(this.gl.MAX_3D_TEXTURE_SIZE);
+            console.log(`  GPU Max 3D Texture Size: ${maxTextureSize}`);
+        }
+
+        if (this.volumeData) {
+            const dims = this.volumeData.dimensions;
+            const memInfo = WebGLUtils.estimateGPUMemory(dims, this.volumeData.dataType);
+            console.log(`  Volume: ${dims[0]}×${dims[1]}×${dims[2]} (${memInfo.gpuMegabytes}MB GPU memory)`);
+        }
     }
 
     /**

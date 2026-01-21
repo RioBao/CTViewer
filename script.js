@@ -232,6 +232,39 @@ class ImageViewer {
             });
         }
 
+        // Enhance 3D button
+        const enhance3DBtn = document.getElementById('enhance3DBtn');
+        const enhance3DStatus = document.getElementById('enhance3DStatus');
+        if (enhance3DBtn) {
+            enhance3DBtn.addEventListener('click', async () => {
+                if (!this.ctViewer || !this.ctViewer.canEnhance3D()) return;
+
+                enhance3DBtn.disabled = true;
+                enhance3DBtn.textContent = 'Enhancing...';
+                if (enhance3DStatus) enhance3DStatus.textContent = '0%';
+
+                const success = await this.ctViewer.enhance3D((progress) => {
+                    if (enhance3DStatus) enhance3DStatus.textContent = `${progress}%`;
+                });
+
+                if (success) {
+                    enhance3DBtn.textContent = 'Enhanced';
+                    if (enhance3DStatus) enhance3DStatus.textContent = '';
+                } else {
+                    enhance3DBtn.textContent = 'Enhance 3D';
+                    enhance3DBtn.disabled = false;
+                    if (enhance3DStatus) enhance3DStatus.textContent = 'Failed';
+                }
+            });
+        }
+
+        // Enable enhance button when volume load completes (if streaming)
+        document.addEventListener('volumeloadcomplete', () => {
+            if (enhance3DBtn && this.ctViewer && this.ctViewer.canEnhance3D()) {
+                enhance3DBtn.disabled = false;
+            }
+        });
+
         // Listen for slice change events from CT viewer
         document.addEventListener('slicechange', (e) => {
             const { axis, sliceIndex, totalSlices } = e.detail;

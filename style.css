@@ -247,6 +247,31 @@ button.active:hover {
     text-align: right;
 }
 
+.control-row button {
+    background: #3a3a3a;
+    color: #ccc;
+    border: 1px solid #555;
+    padding: 0.4rem 0.8rem;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.control-row button:hover:not(:disabled) {
+    background: #4a4a4a;
+}
+
+.control-row button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.status-text {
+    font-size: 0.75rem;
+    color: #888;
+    margin-left: 0.5rem;
+}
+
 /* Volume View (2x2 Grid for 3D, single view for 2D) */
 .ct-view {
     width: 100%;

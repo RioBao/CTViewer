@@ -285,6 +285,48 @@ class CTViewer {
     }
 
     /**
+     * Check if 3D enhancement is available
+     */
+    canEnhance3D() {
+        return this.progressiveVolume &&
+               typeof this.progressiveVolume.canEnhance3D === 'function' &&
+               this.progressiveVolume.canEnhance3D();
+    }
+
+    /**
+     * Enhance 3D volume resolution (loads higher-res version)
+     * @param {function} onProgress - Progress callback (0-100)
+     * @returns {Promise<boolean>} Success
+     */
+    async enhance3D(onProgress) {
+        if (!this.canEnhance3D()) {
+            console.warn('3D enhancement not available for this volume');
+            return false;
+        }
+
+        if (!this.renderer3D) {
+            console.warn('No 3D renderer available');
+            return false;
+        }
+
+        console.log('CTViewer: Starting 3D enhancement...');
+
+        try {
+            const enhancedVolume = await this.progressiveVolume.createEnhanced3DVolume(onProgress);
+
+            if (enhancedVolume) {
+                this.renderer3D.loadVolume(enhancedVolume);
+                console.log('CTViewer: 3D enhancement complete');
+                return true;
+            }
+        } catch (e) {
+            console.error('3D enhancement failed:', e);
+        }
+
+        return false;
+    }
+
+    /**
      * Render all three orthogonal views
      */
     renderAllViews() {

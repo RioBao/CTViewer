@@ -653,6 +653,87 @@ class StreamingVolumeData {
     }
 
     /**
+     * Check if 3D can be enhanced (streaming mode with scale > 2)
+     */
+    canEnhance3D() {
+        return this.isStreaming && this.lowResScale > 2;
+    }
+
+    /**
+     * Create enhanced resolution volume for 3D rendering (scale=2 instead of scale=4)
+     * @param {function} onProgress - Progress callback (0-100)
+     * @returns {Promise<Object>} Enhanced volume data
+     */
+    async createEnhanced3DVolume(onProgress) {
+        const scale = 2;
+        const [nx, ny, nz] = this.dimensions;
+
+        const dstNx = Math.ceil(nx / scale);
+        const dstNy = Math.ceil(ny / scale);
+        const dstNz = Math.ceil(nz / scale);
+
+        console.log(`Enhancing 3D: Creating ${dstNx}×${dstNy}×${dstNz} volume (scale=${scale})`);
+
+        // Allocate enhanced buffer
+        const enhancedData = new Float32Array(dstNx * dstNy * dstNz);
+
+        // Process every 'scale'-th z-slice
+        for (let dz = 0; dz < dstNz; dz++) {
+            const srcZ = dz * scale;
+
+            // Read one slice from file
+            const sliceStart = srcZ * this.sliceSize;
+            const sliceEnd = Math.min(sliceStart + this.sliceSize, this.file.size);
+            const sliceBlob = this.file.slice(sliceStart, sliceEnd);
+
+            let sliceBuffer;
+            try {
+                sliceBuffer = await this.readBlob(sliceBlob);
+            } catch (e) {
+                console.error(`Failed to read slice ${dz}:`, e);
+                continue;
+            }
+
+            const sliceData = this.bufferToTypedArray(sliceBuffer, this.dataType);
+
+            // Downsample this slice
+            for (let dy = 0; dy < dstNy; dy++) {
+                const srcY = dy * scale;
+                for (let dx = 0; dx < dstNx; dx++) {
+                    const srcX = dx * scale;
+
+                    // Sample single voxel (nearest neighbor for speed)
+                    const srcIdx = srcX + srcY * nx;
+                    const value = srcIdx < sliceData.length ? sliceData[srcIdx] : 0;
+
+                    const dstIdx = dx + dy * dstNx + dz * dstNx * dstNy;
+                    enhancedData[dstIdx] = value;
+                }
+            }
+
+            // Progress update
+            if (onProgress && dz % 5 === 0) {
+                onProgress(Math.round((dz / dstNz) * 100));
+                await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI
+            }
+        }
+
+        const enhancedVolume = {
+            dimensions: [dstNx, dstNy, dstNz],
+            dataType: this.dataType,
+            spacing: this.spacing.map(s => s * scale),
+            data: enhancedData,
+            min: this.min,
+            max: this.max,
+            isEnhanced: true
+        };
+
+        console.log(`Enhanced 3D volume created: ${dstNx}×${dstNy}×${dstNz}`);
+
+        return enhancedVolume;
+    }
+
+    /**
      * Get loading progress (for API compatibility with ProgressiveVolumeData)
      */
     getLoadProgress() {
