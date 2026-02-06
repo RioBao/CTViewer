@@ -80,8 +80,49 @@ class VolumeRenderer3D {
         // Volume loaded flag
         this.volumeLoaded = false;
 
+        // Volume resolution overlay (shows when 3D uses low-res data)
+        this.volumeInfoOverlay = null;
+        this.createVolumeInfoOverlay();
+
         this.setupEventListeners();
         this.drawPlaceholder();
+    }
+
+    /**
+     * Create a DOM overlay for showing volume resolution info
+     */
+    createVolumeInfoOverlay() {
+        const container = this.canvas.parentElement;
+        if (!container) return;
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText =
+            'position:absolute;bottom:8px;right:8px;' +
+            'background:rgba(255,170,0,0.75);color:#000;' +
+            'font:bold 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+            'padding:2px 6px;border-radius:4px;' +
+            'pointer-events:none;display:none;z-index:10;';
+        container.appendChild(overlay);
+        this.volumeInfoOverlay = overlay;
+    }
+
+    /**
+     * Show or hide the volume resolution overlay
+     */
+    updateVolumeInfoOverlay() {
+        if (!this.volumeInfoOverlay || !this.volumeData) return;
+
+        const dims = this.volumeData.dimensions;
+        if (this.volumeData.isLowRes || this.volumeData.isEnhanced) {
+            const label = this.volumeData.isEnhanced ? 'ENHANCED' : 'LOW RES';
+            this.volumeInfoOverlay.textContent = `${label} \u00B7 ${dims[0]}\u00D7${dims[1]}\u00D7${dims[2]}`;
+            this.volumeInfoOverlay.style.display = 'block';
+            this.volumeInfoOverlay.style.background = this.volumeData.isEnhanced
+                ? 'rgba(76, 175, 80, 0.75)'
+                : 'rgba(255, 170, 0, 0.75)';
+        } else {
+            this.volumeInfoOverlay.style.display = 'none';
+        }
     }
 
     /**
@@ -209,6 +250,9 @@ class VolumeRenderer3D {
         }
 
         this.volumeLoaded = true;
+
+        // Update resolution overlay
+        this.updateVolumeInfoOverlay();
 
         // Log renderer info
         this.logRendererInfo();
@@ -728,6 +772,11 @@ class VolumeRenderer3D {
         this.imageData = null;
         this.volumeData = null;
         this.volumeLoaded = false;
+
+        // Hide resolution overlay
+        if (this.volumeInfoOverlay) {
+            this.volumeInfoOverlay.style.display = 'none';
+        }
 
         // Clear the main canvas
         if (this.ctx) {

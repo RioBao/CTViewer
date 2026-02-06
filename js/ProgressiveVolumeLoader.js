@@ -62,7 +62,8 @@ class ProgressiveVolumeLoader {
             spacing: metadata.spacing ? metadata.spacing.map(s => s * this.DOWNSAMPLE_SCALE) : [1, 1, 1],
             data: lowResData,
             min: min,
-            max: max
+            max: max,
+            isLowRes: true
         };
 
         // Store in progressive data
@@ -131,7 +132,8 @@ class ProgressiveVolumeLoader {
             spacing: metadata.spacing ? metadata.spacing.map(s => s * this.DOWNSAMPLE_SCALE) : [1, 1, 1],
             data: lowResData,
             min: min,
-            max: max
+            max: max,
+            isLowRes: true
         };
 
         // Store in progressive data
@@ -196,7 +198,8 @@ class ProgressiveVolumeLoader {
             spacing: metadata.spacing ? metadata.spacing.map(s => s * this.DOWNSAMPLE_SCALE) : [1, 1, 1],
             data: lowResData,
             min: min,
-            max: max
+            max: max,
+            isLowRes: true
         };
 
         // Create temporary StreamingVolumeData for immediate display.
