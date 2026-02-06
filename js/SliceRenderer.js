@@ -7,6 +7,7 @@ class SliceRenderer {
         this.currentSliceData = null;
         this.currentWidth = 0;
         this.currentHeight = 0;
+        this.isLowRes = false;
 
         // Rendering parameters
         this.zoom = 1.0;
@@ -67,6 +68,7 @@ class SliceRenderer {
         this.currentSliceData = sliceData;
         this.currentWidth = sliceData.width;
         this.currentHeight = sliceData.height;
+        this.isLowRes = !!sliceData.isLowRes;
 
         // Size canvas based on container dimensions for best quality
         // Use container size but cap at a reasonable max for performance
@@ -161,8 +163,11 @@ class SliceRenderer {
 
             this.ctx.restore();
 
-            // Draw label
+            // Draw label and resolution indicator
             this.drawLabel();
+            if (this.isLowRes) {
+                this.drawResolutionIndicator();
+            }
         } catch (e) {
             console.error('Canvas rendering error (possible GPU issue):', e);
             // Attempt recovery by clearing and showing error
@@ -230,6 +235,41 @@ class SliceRenderer {
         this.ctx.fillText(text, x, y);
 
         this.ctx.restore();
+    }
+
+    /**
+     * Draw a small resolution indicator in the bottom-right corner
+     */
+    drawResolutionIndicator() {
+        try {
+            this.ctx.save();
+
+            const text = 'LOW RES';
+            const font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            this.ctx.font = font;
+            const metrics = this.ctx.measureText(text);
+            const textW = metrics.width;
+            const padX = 6;
+            const padY = 4;
+            const h = 18;
+            const w = textW + padX * 2;
+            const x = this.canvas.width - w - 8;
+            const y = this.canvas.height - h - 8;
+
+            // Background pill
+            this.ctx.fillStyle = 'rgba(255, 170, 0, 0.75)';
+            this.ctx.beginPath();
+            this.ctx.roundRect(x, y, w, h, 4);
+            this.ctx.fill();
+
+            // Text
+            this.ctx.fillStyle = '#000';
+            this.ctx.fillText(text, x + padX, y + h - padY - 1);
+
+            this.ctx.restore();
+        } catch (e) {
+            // Silently ignore — roundRect not supported in very old browsers
+        }
     }
 
     /**

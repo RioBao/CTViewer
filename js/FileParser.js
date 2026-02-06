@@ -407,36 +407,17 @@ class FileParser {
                 throw new Error('No metadata file provided (JSON or volumeinfo)');
             }
 
-            // Calculate expected file size
-            const [nx, ny, nz] = metadata.dimensions;
-            const bytesPerVoxel = this.getBytesPerVoxel(metadata.dataType);
-            const expectedSize = nx * ny * nz * bytesPerVoxel;
-
-            // Use streaming mode for very large files (>1GB)
-            const STREAMING_THRESHOLD = 1024 * 1024 * 1024; // 1GB
-
             const loader = new ProgressiveVolumeLoader();
 
-            if (expectedSize > STREAMING_THRESHOLD) {
-                // Streaming mode: never load full data into memory
-                console.log(`Using streaming mode for ${(expectedSize / (1024*1024*1024)).toFixed(2)} GB volume`);
-                if (callbacks.onProgress) callbacks.onProgress({ stage: 'streaming', progress: 0 });
+            // Always pass file reference — loader decides strategy:
+            // >2GB: streaming (never loads full data)
+            // <=2GB: hybrid (quick low-res preview, then full data in background)
+            if (callbacks.onProgress) callbacks.onProgress({ stage: 'streaming', progress: 0 });
 
-                const progressiveData = await loader.loadProgressive(null, metadata, callbacks, rawFile);
+            const progressiveData = await loader.loadProgressive(null, metadata, callbacks, rawFile);
 
-                if (callbacks.onProgress) callbacks.onProgress({ stage: 'complete', progress: 100 });
-                return progressiveData;
-            } else {
-                // Standard mode: load full data into memory
-                if (callbacks.onProgress) callbacks.onProgress({ stage: 'loading', progress: 0 });
-                const arrayBuffer = await this.loadRAWFile(rawFile);
-
-                if (callbacks.onProgress) callbacks.onProgress({ stage: 'processing', progress: 50 });
-                const progressiveData = await loader.loadProgressive(arrayBuffer, metadata, callbacks, null);
-
-                if (callbacks.onProgress) callbacks.onProgress({ stage: 'complete', progress: 100 });
-                return progressiveData;
-            }
+            if (callbacks.onProgress) callbacks.onProgress({ stage: 'complete', progress: 100 });
+            return progressiveData;
 
         } catch (error) {
             throw new Error(`Failed to load 3D volume progressively: ${error.message}`);

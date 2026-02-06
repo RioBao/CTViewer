@@ -1,6 +1,6 @@
 /**
  * Streaming Volume Data
- * For very large volumes (>1GB), reads slices on-demand from file
+ * For very large volumes (>2GB), reads slices on-demand from file
  * Never loads full volume into memory
  */
 class StreamingVolumeData {
@@ -26,15 +26,15 @@ class StreamingVolumeData {
         this.max = 1;
 
         // Slice cache (LRU-style, limited size)
-        // Cache more slices for smoother scrolling and YZ loading
+        // Uses Map insertion order for LRU tracking (delete + re-set moves to end)
         // ~4MB per slice for 1004x1004 float, 100 slices = ~400MB max cache
         this.sliceCache = new Map();
         this.maxCachedSlices = 100;
-        this.cacheOrder = [];
 
         // Prefetch settings
         this.prefetchRadius = 10; // Prefetch 10 slices ahead/behind
         this.prefetchInProgress = new Set();
+        this.maxConcurrentPrefetch = 4;
 
         // Callback when a slice becomes available (for re-rendering)
         this.onSliceReady = null;
@@ -53,6 +53,14 @@ class StreamingVolumeData {
         this.bytesPerVoxel = this.getBytesPerVoxel(this.dataType);
         const [nx, ny, nz] = this.dimensions;
         this.sliceSize = nx * ny * this.bytesPerVoxel;
+
+        // Serialized I/O queue — only one blob read in-flight at a time.
+        // Concurrent reads compete for browser I/O and each takes ~50% longer.
+        this._readQueue = Promise.resolve();
+
+        // When true, skip all async file reads (used in hybrid preview mode
+        // where full data will be available shortly)
+        this.disableAsyncLoads = false;
     }
 
     getBytesPerVoxel(dataType) {
@@ -122,21 +130,21 @@ class StreamingVolumeData {
         // Check cache first
         const cacheKey = `xy_${z}`;
         if (this.sliceCache.has(cacheKey)) {
-            // Move to end of cache order (most recently used)
-            const idx = this.cacheOrder.indexOf(cacheKey);
-            if (idx > -1) {
-                this.cacheOrder.splice(idx, 1);
-                this.cacheOrder.push(cacheKey);
-            }
-            return this.sliceCache.get(cacheKey);
+            // Move to end of Map (most recently used)
+            const value = this.sliceCache.get(cacheKey);
+            this.sliceCache.delete(cacheKey);
+            this.sliceCache.set(cacheKey, value);
+            return value;
         }
 
         // Read slice from file
+        const tRead = performance.now();
         const sliceStart = z * this.sliceSize;
         const sliceEnd = sliceStart + this.sliceSize;
         const sliceBlob = this.file.slice(sliceStart, sliceEnd);
         const sliceBuffer = await this.readBlob(sliceBlob);
         const sliceData = this.bufferToTypedArray(sliceBuffer, this.dataType);
+        console.log(`[XY z=${z}] read: ${(performance.now() - tRead).toFixed(1)}ms (${(this.sliceSize / 1024 / 1024).toFixed(1)}MB)`);
 
         const result = {
             data: sliceData,
@@ -166,31 +174,32 @@ class StreamingVolumeData {
         // Check cache first
         const cacheKey = `xy_${z}`;
         if (this.sliceCache.has(cacheKey)) {
-            const idx = this.cacheOrder.indexOf(cacheKey);
-            if (idx > -1) {
-                this.cacheOrder.splice(idx, 1);
-                this.cacheOrder.push(cacheKey);
-            }
+            // Move to end of Map (most recently used)
+            const value = this.sliceCache.get(cacheKey);
+            this.sliceCache.delete(cacheKey);
+            this.sliceCache.set(cacheKey, value);
 
             // Prefetch nearby slices in background
             this.prefetchNearbySlices(z, nz);
 
-            return this.sliceCache.get(cacheKey);
+            return value;
         }
 
-        // Trigger async load for this slice
-        if (!this.prefetchInProgress.has(z)) {
-            this.prefetchInProgress.add(z);
-            this.getXYSliceAsync(z, nx, ny, nz)
-                .then(() => this.prefetchInProgress.delete(z))
-                .catch(e => {
-                    this.prefetchInProgress.delete(z);
-                    console.warn(`Failed to cache slice ${z}:`, e);
-                });
-        }
+        if (!this.disableAsyncLoads) {
+            // Trigger async load for this slice
+            if (!this.prefetchInProgress.has(z)) {
+                this.prefetchInProgress.add(z);
+                this.getXYSliceAsync(z, nx, ny, nz)
+                    .then(() => this.prefetchInProgress.delete(z))
+                    .catch(e => {
+                        this.prefetchInProgress.delete(z);
+                        console.warn(`Failed to cache slice ${z}:`, e);
+                    });
+            }
 
-        // Prefetch nearby slices in background
-        this.prefetchNearbySlices(z, nz);
+            // Prefetch nearby slices in background
+            this.prefetchNearbySlices(z, nz);
+        }
 
         // Return upscaled low-res for now
         return this.getUpscaledXYSlice(z, nx, ny);
@@ -198,34 +207,33 @@ class StreamingVolumeData {
 
     /**
      * Prefetch slices around the current z position
+     * Limits concurrent reads to maxConcurrentPrefetch
      */
     prefetchNearbySlices(centerZ, nz) {
         const [nx, ny] = this.dimensions;
 
+        // Build ordered list of slices to prefetch (nearest first)
+        const toFetch = [];
         for (let offset = 1; offset <= this.prefetchRadius; offset++) {
-            // Prefetch forward
             const zForward = centerZ + offset;
-            if (zForward < nz) {
-                const keyForward = `xy_${zForward}`;
-                if (!this.sliceCache.has(keyForward) && !this.prefetchInProgress.has(zForward)) {
-                    this.prefetchInProgress.add(zForward);
-                    this.getXYSliceAsync(zForward, nx, ny, nz)
-                        .then(() => this.prefetchInProgress.delete(zForward))
-                        .catch(() => this.prefetchInProgress.delete(zForward));
-                }
+            if (zForward < nz && !this.sliceCache.has(`xy_${zForward}`) && !this.prefetchInProgress.has(zForward)) {
+                toFetch.push(zForward);
             }
-
-            // Prefetch backward
             const zBackward = centerZ - offset;
-            if (zBackward >= 0) {
-                const keyBackward = `xy_${zBackward}`;
-                if (!this.sliceCache.has(keyBackward) && !this.prefetchInProgress.has(zBackward)) {
-                    this.prefetchInProgress.add(zBackward);
-                    this.getXYSliceAsync(zBackward, nx, ny, nz)
-                        .then(() => this.prefetchInProgress.delete(zBackward))
-                        .catch(() => this.prefetchInProgress.delete(zBackward));
-                }
+            if (zBackward >= 0 && !this.sliceCache.has(`xy_${zBackward}`) && !this.prefetchInProgress.has(zBackward)) {
+                toFetch.push(zBackward);
             }
+        }
+
+        // Only launch up to maxConcurrentPrefetch - (already in progress) reads
+        const available = this.maxConcurrentPrefetch - this.prefetchInProgress.size;
+        const toStart = toFetch.slice(0, Math.max(0, available));
+
+        for (const z of toStart) {
+            this.prefetchInProgress.add(z);
+            this.getXYSliceAsync(z, nx, ny, nz)
+                .then(() => this.prefetchInProgress.delete(z))
+                .catch(() => this.prefetchInProgress.delete(z));
         }
     }
 
@@ -234,7 +242,6 @@ class StreamingVolumeData {
      */
     getUpscaledXYSlice(z, nx, ny) {
         if (!this.lowResVolume || !this.lowResVolume.dimensions || !this.lowResVolume.data) {
-            // Return empty slice if no low-res yet
             return {
                 data: new Float32Array(nx * ny),
                 width: nx,
@@ -284,7 +291,7 @@ class StreamingVolumeData {
         }
 
         // Trigger async load if not already loading
-        if (!this.xzLoadInProgress || this.currentXZIndex !== y) {
+        if (!this.disableAsyncLoads && (!this.xzLoadInProgress || this.currentXZIndex !== y)) {
             this.loadXZSliceAsync(y);
         }
 
@@ -299,21 +306,17 @@ class StreamingVolumeData {
 
         const scale = this.lowResScale;
         const [lnx, lny, lnz] = this.lowResVolume.dimensions;
-        const lowResData = this.lowResVolume.data;
+        const srcData = this.lowResVolume.data;
 
-        // Map y to low-res y
         const ly = Math.min(Math.floor(y / scale), lny - 1);
 
-        // Upscale XZ slice
         const sliceData = new Float32Array(nx * nz);
 
         for (let z = 0; z < nz; z++) {
             const lz = Math.min(Math.floor(z / scale), lnz - 1);
             for (let x = 0; x < nx; x++) {
                 const lx = Math.min(Math.floor(x / scale), lnx - 1);
-                const lowIdx = lx + ly * lnx + lz * lnx * lny;
-                const highIdx = x + z * nx;
-                sliceData[highIdx] = lowResData[lowIdx];
+                sliceData[x + z * nx] = srcData[lx + ly * lnx + lz * lnx * lny];
             }
         }
 
@@ -326,52 +329,112 @@ class StreamingVolumeData {
     }
 
     /**
-     * Async load high-res XZ slice by reading row from each Z slice
+     * Async load high-res XZ slice using slab-based reads.
+     * Reads contiguous blocks of XY slices as single blobs (~50MB each),
+     * then extracts row y from each using typed array views (zero-copy).
+     * Loads center-out and fires onXZSliceReady after each slab for progressive display.
      */
     async loadXZSliceAsync(y) {
         const [nx, ny, nz] = this.dimensions;
         this.xzLoadInProgress = true;
         this.currentXZIndex = y;
-        // Clear cached slice to prevent returning stale data during load
         this.currentXZSlice = null;
+        const t0 = performance.now();
 
         try {
+            // Initialize with upscaled low-res data
             const sliceData = new Float32Array(nx * nz);
-
-            // Read row y from each Z slice
-            for (let z = 0; z < nz; z++) {
-                // Calculate file offset for row y in slice z
-                const rowStart = (z * nx * ny + y * nx) * this.bytesPerVoxel;
-                const rowEnd = rowStart + nx * this.bytesPerVoxel;
-
-                const rowBlob = this.file.slice(rowStart, rowEnd);
-                const rowBuffer = await this.readBlob(rowBlob);
-                const rowData = this.bufferToTypedArray(rowBuffer, this.dataType);
-
-                // Copy row into slice
-                for (let x = 0; x < nx && x < rowData.length; x++) {
-                    sliceData[x + z * nx] = rowData[x];
-                }
-
-                // Yield occasionally to keep UI responsive
-                if (z % 50 === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 0));
+            if (this.lowResVolume && this.lowResVolume.dimensions && this.lowResVolume.data) {
+                const scale = this.lowResScale;
+                const [lnx, lny, lnz] = this.lowResVolume.dimensions;
+                const srcData = this.lowResVolume.data;
+                const ly = Math.min(Math.floor(y / scale), lny - 1);
+                for (let z = 0; z < nz; z++) {
+                    const lz = Math.min(Math.floor(z / scale), lnz - 1);
+                    for (let x = 0; x < nx; x++) {
+                        const lx = Math.min(Math.floor(x / scale), lnx - 1);
+                        sliceData[x + z * nx] = srcData[lx + ly * lnx + lz * lnx * lny];
+                    }
                 }
             }
+            const tInit = performance.now();
+            console.log(`[XZ y=${y}] init from lowRes: ${(tInit - t0).toFixed(1)}ms`);
 
-            // Only update if this is still the requested slice
+            // Size slabs to ~50MB max regardless of data type
+            const SLAB_BUDGET = 50 * 1024 * 1024;
+            const slabSlices = Math.max(1, Math.floor(SLAB_BUDGET / this.sliceSize));
+            const totalSlabs = Math.ceil(nz / slabSlices);
+            console.log(`[XZ y=${y}] ${totalSlabs} slabs of ${slabSlices} slices (${(slabSlices * this.sliceSize / 1024 / 1024).toFixed(1)}MB each)`);
+
+            // Center-out slab order
+            const centerSlab = Math.min(Math.floor(nz / 2 / slabSlices), totalSlabs - 1);
+            const slabOrder = [centerSlab];
+            for (let offset = 1; offset < totalSlabs; offset++) {
+                if (centerSlab + offset < totalSlabs) slabOrder.push(centerSlab + offset);
+                if (centerSlab - offset >= 0) slabOrder.push(centerSlab - offset);
+            }
+
+            let slabsDone = 0;
+            for (const slabIdx of slabOrder) {
+                if (this.currentXZIndex !== y) {
+                    console.log(`[XZ y=${y}] cancelled after ${slabsDone}/${totalSlabs} slabs (${(performance.now() - t0).toFixed(1)}ms)`);
+                    return;
+                }
+
+                const zStart = slabIdx * slabSlices;
+                const zEnd = Math.min(zStart + slabSlices, nz);
+
+                // One large contiguous read for the entire slab
+                const tRead = performance.now();
+                const slabBuffer = await this.readBlob(
+                    this.file.slice(zStart * this.sliceSize, zEnd * this.sliceSize)
+                );
+                const tExtract = performance.now();
+
+                // Extract row y from each z-level using typed array views (no copy)
+                for (let z = zStart; z < zEnd; z++) {
+                    const i = z - zStart;
+                    const rowByteOffset = (i * nx * ny + y * nx) * this.bytesPerVoxel;
+                    const rowView = this.typedArrayView(slabBuffer, rowByteOffset, nx);
+                    sliceData.set(rowView, z * nx);
+                }
+                slabsDone++;
+
+                const tDone = performance.now();
+                if (slabsDone <= 3 || slabsDone === totalSlabs) {
+                    console.log(`[XZ y=${y}] slab ${slabsDone}/${totalSlabs} (z=${zStart}-${zEnd}): read=${(tExtract - tRead).toFixed(1)}ms extract=${(tDone - tExtract).toFixed(1)}ms`);
+                }
+
+                // Show progressive results after each slab (still partial = isLowRes)
+                if (this.currentXZIndex === y) {
+                    this.currentXZSlice = {
+                        data: sliceData,
+                        width: nx,
+                        height: nz,
+                        isLowRes: slabsDone < totalSlabs
+                    };
+                    if (this.onXZSliceReady) {
+                        this.onXZSliceReady(y);
+                    }
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            // Final update with isLowRes: false
             if (this.currentXZIndex === y) {
                 this.currentXZSlice = {
                     data: sliceData,
                     width: nx,
-                    height: nz
+                    height: nz,
+                    isLowRes: false
                 };
-
-                // Notify listener
                 if (this.onXZSliceReady) {
                     this.onXZSliceReady(y);
                 }
             }
+
+            console.log(`[XZ y=${y}] complete: ${(performance.now() - t0).toFixed(1)}ms total`);
         } catch (e) {
             console.warn(`Failed to load XZ slice at y=${y}:`, e);
         } finally {
@@ -393,7 +456,7 @@ class StreamingVolumeData {
         }
 
         // Trigger async load if not already loading
-        if (!this.yzLoadInProgress || this.currentYZIndex !== x) {
+        if (!this.disableAsyncLoads && (!this.yzLoadInProgress || this.currentYZIndex !== x)) {
             this.loadYZSliceAsync(x);
         }
 
@@ -408,21 +471,17 @@ class StreamingVolumeData {
 
         const scale = this.lowResScale;
         const [lnx, lny, lnz] = this.lowResVolume.dimensions;
-        const lowResData = this.lowResVolume.data;
+        const srcData = this.lowResVolume.data;
 
-        // Map x to low-res x
         const lx = Math.min(Math.floor(x / scale), lnx - 1);
 
-        // Upscale YZ slice
         const sliceData = new Float32Array(ny * nz);
 
         for (let z = 0; z < nz; z++) {
             const lz = Math.min(Math.floor(z / scale), lnz - 1);
             for (let y = 0; y < ny; y++) {
                 const ly = Math.min(Math.floor(y / scale), lny - 1);
-                const lowIdx = lx + ly * lnx + lz * lnx * lny;
-                const highIdx = y + z * ny;
-                sliceData[highIdx] = lowResData[lowIdx];
+                sliceData[y + z * ny] = srcData[lx + ly * lnx + lz * lnx * lny];
             }
         }
 
@@ -435,61 +494,115 @@ class StreamingVolumeData {
     }
 
     /**
-     * Async load high-res YZ slice by reading column from each Z slice
-     * Caches XY slices as they're read for faster subsequent access
+     * Async load high-res YZ slice using slab-based reads.
+     * Column data is NOT contiguous in file, so we read contiguous blocks of
+     * XY slices as single blobs (~50MB each), then extract column x from each
+     * z-level using typed array views. Center-out order + progressive display.
      */
     async loadYZSliceAsync(x) {
         const [nx, ny, nz] = this.dimensions;
         this.yzLoadInProgress = true;
         this.currentYZIndex = x;
-        // Clear cached slice to prevent returning stale data during load
         this.currentYZSlice = null;
+        const t0 = performance.now();
 
         try {
+            // Initialize with upscaled low-res data
             const sliceData = new Float32Array(ny * nz);
+            if (this.lowResVolume && this.lowResVolume.dimensions && this.lowResVolume.data) {
+                const scale = this.lowResScale;
+                const [lnx, lny, lnz] = this.lowResVolume.dimensions;
+                const srcData = this.lowResVolume.data;
+                const lx = Math.min(Math.floor(x / scale), lnx - 1);
+                for (let z = 0; z < nz; z++) {
+                    const lz = Math.min(Math.floor(z / scale), lnz - 1);
+                    for (let y = 0; y < ny; y++) {
+                        const ly = Math.min(Math.floor(y / scale), lny - 1);
+                        sliceData[y + z * ny] = srcData[lx + ly * lnx + lz * lnx * lny];
+                    }
+                }
+            }
+            const tInit = performance.now();
+            console.log(`[YZ x=${x}] init from lowRes: ${(tInit - t0).toFixed(1)}ms`);
 
-            // Read column x from each Z slice
-            // Read in batches to improve performance
-            const BATCH_SIZE = 20;
+            // Size slabs to ~50MB max regardless of data type
+            const SLAB_BUDGET = 50 * 1024 * 1024;
+            const slabSlices = Math.max(1, Math.floor(SLAB_BUDGET / this.sliceSize));
+            const totalSlabs = Math.ceil(nz / slabSlices);
+            console.log(`[YZ x=${x}] ${totalSlabs} slabs of ${slabSlices} slices (${(slabSlices * this.sliceSize / 1024 / 1024).toFixed(1)}MB each)`);
 
-            for (let zStart = 0; zStart < nz; zStart += BATCH_SIZE) {
-                const zEnd = Math.min(zStart + BATCH_SIZE, nz);
+            // Center-out slab order
+            const centerSlab = Math.min(Math.floor(nz / 2 / slabSlices), totalSlabs - 1);
+            const slabOrder = [centerSlab];
+            for (let offset = 1; offset < totalSlabs; offset++) {
+                if (centerSlab + offset < totalSlabs) slabOrder.push(centerSlab + offset);
+                if (centerSlab - offset >= 0) slabOrder.push(centerSlab - offset);
+            }
 
-                // Process batch of Z slices in parallel
-                const batchPromises = [];
-                for (let z = zStart; z < zEnd; z++) {
-                    batchPromises.push(this.loadAndCacheXYSlice(z, nx, ny));
+            let slabsDone = 0;
+            for (const slabIdx of slabOrder) {
+                if (this.currentYZIndex !== x) {
+                    console.log(`[YZ x=${x}] cancelled after ${slabsDone}/${totalSlabs} slabs (${(performance.now() - t0).toFixed(1)}ms)`);
+                    return;
                 }
 
-                const batchResults = await Promise.all(batchPromises);
+                const zStart = slabIdx * slabSlices;
+                const zEnd = Math.min(zStart + slabSlices, nz);
 
-                // Extract column x from each slice in batch
-                for (let i = 0; i < batchResults.length; i++) {
-                    const z = zStart + i;
-                    const xySliceData = batchResults[i];
+                // One large contiguous read for the entire slab
+                const tRead = performance.now();
+                const slabBuffer = await this.readBlob(
+                    this.file.slice(zStart * this.sliceSize, zEnd * this.sliceSize)
+                );
+                const tExtract = performance.now();
 
-                    for (let y = 0; y < ny && (x + y * nx) < xySliceData.length; y++) {
-                        sliceData[y + z * ny] = xySliceData[x + y * nx];
+                // Extract column x from each z-level in the slab
+                // Column data isn't contiguous: element at (x + y*nx) for each y
+                for (let z = zStart; z < zEnd; z++) {
+                    const i = z - zStart;
+                    const sliceByteOffset = i * nx * ny * this.bytesPerVoxel;
+                    const sliceView = this.typedArrayView(slabBuffer, sliceByteOffset, nx * ny);
+                    for (let y = 0; y < ny; y++) {
+                        sliceData[y + z * ny] = sliceView[x + y * nx];
+                    }
+                }
+                slabsDone++;
+
+                const tDone = performance.now();
+                if (slabsDone <= 3 || slabsDone === totalSlabs) {
+                    console.log(`[YZ x=${x}] slab ${slabsDone}/${totalSlabs} (z=${zStart}-${zEnd}): read=${(tExtract - tRead).toFixed(1)}ms extract=${(tDone - tExtract).toFixed(1)}ms`);
+                }
+
+                // Show progressive results after each slab (still partial = isLowRes)
+                if (this.currentYZIndex === x) {
+                    this.currentYZSlice = {
+                        data: sliceData,
+                        width: ny,
+                        height: nz,
+                        isLowRes: slabsDone < totalSlabs
+                    };
+                    if (this.onYZSliceReady) {
+                        this.onYZSliceReady(x);
                     }
                 }
 
-                // Yield to keep UI responsive between batches
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
 
-            // Only update if this is still the requested slice
+            // Final update with isLowRes: false
             if (this.currentYZIndex === x) {
                 this.currentYZSlice = {
                     data: sliceData,
                     width: ny,
-                    height: nz
+                    height: nz,
+                    isLowRes: false
                 };
-
-                // Notify listener
                 if (this.onYZSliceReady) {
                     this.onYZSliceReady(x);
                 }
             }
+
+            console.log(`[YZ x=${x}] complete: ${(performance.now() - t0).toFixed(1)}ms total`);
         } catch (e) {
             console.warn(`Failed to load YZ slice at x=${x}:`, e);
         } finally {
@@ -498,59 +611,31 @@ class StreamingVolumeData {
     }
 
     /**
-     * Load and cache an XY slice, returning the data
-     */
-    async loadAndCacheXYSlice(z, nx, ny) {
-        const cacheKey = `xy_${z}`;
-
-        // Check cache first
-        if (this.sliceCache.has(cacheKey)) {
-            return this.sliceCache.get(cacheKey).data;
-        }
-
-        // Read from file
-        const sliceStart = z * nx * ny * this.bytesPerVoxel;
-        const sliceEnd = sliceStart + nx * ny * this.bytesPerVoxel;
-
-        const sliceBlob = this.file.slice(sliceStart, sliceEnd);
-        const sliceBuffer = await this.readBlob(sliceBlob);
-        const xySliceData = this.bufferToTypedArray(sliceBuffer, this.dataType);
-
-        // Cache the slice for future use
-        const result = {
-            data: xySliceData,
-            width: nx,
-            height: ny
-        };
-        this.addToCache(cacheKey, result);
-
-        return xySliceData;
-    }
-
-    /**
      * Add slice to cache with LRU eviction
      */
     addToCache(key, value) {
-        // Evict oldest if at capacity
-        while (this.cacheOrder.length >= this.maxCachedSlices) {
-            const oldestKey = this.cacheOrder.shift();
+        // If key already exists, delete it first so re-set moves it to end
+        if (this.sliceCache.has(key)) {
+            this.sliceCache.delete(key);
+        }
+
+        // Evict oldest entries if at capacity
+        while (this.sliceCache.size >= this.maxCachedSlices) {
+            // Map.keys() iterator yields in insertion order; first key is oldest
+            const oldestKey = this.sliceCache.keys().next().value;
             this.sliceCache.delete(oldestKey);
         }
 
         this.sliceCache.set(key, value);
-        this.cacheOrder.push(key);
     }
 
     /**
      * Read a Blob as ArrayBuffer
      */
     readBlob(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = () => reject(new Error('Failed to read blob'));
-            reader.readAsArrayBuffer(blob);
-        });
+        const doRead = () => blob.arrayBuffer();
+        this._readQueue = this._readQueue.then(doRead, doRead);
+        return this._readQueue;
     }
 
     /**
@@ -563,6 +648,19 @@ class StreamingVolumeData {
             case 'float':
             case 'float32': return new Float32Array(buffer);
             default: return new Float32Array(buffer);
+        }
+    }
+
+    /**
+     * Create a TypedArray view into a buffer at a byte offset (no copy)
+     */
+    typedArrayView(buffer, byteOffset, length) {
+        switch (this.dataType.toLowerCase()) {
+            case 'uint8': return new Uint8Array(buffer, byteOffset, length);
+            case 'uint16': return new Uint16Array(buffer, byteOffset, length);
+            case 'float':
+            case 'float32': return new Float32Array(buffer, byteOffset, length);
+            default: return new Float32Array(buffer, byteOffset, length);
         }
     }
 

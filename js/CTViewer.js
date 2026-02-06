@@ -269,10 +269,17 @@ class CTViewer {
 
         console.log('CTViewer: All blocks loaded, updating 3D renderer');
 
-        // Now upload the full-resolution volume to the 3D renderer
+        // Upload full-resolution volume to 3D renderer if it fits in GPU memory.
+        // For large volumes, keep the low-res 3D (already loaded from handleLowResReady).
         if (this.renderer3D && !this.singleViewMode) {
             const fullResVolume = this.progressiveVolume.getFullVolumeData();
-            this.renderer3D.loadVolume(fullResVolume);
+            const [nx, ny, nz] = fullResVolume.dimensions;
+            const memMB = nx * ny * nz * 4 / (1024 * 1024); // Float32 size
+            if (memMB <= 512) {
+                this.renderer3D.loadVolume(fullResVolume);
+            } else {
+                console.log(`CTViewer: Skipping 3D upload (${memMB.toFixed(0)}MB > 512MB limit), keeping low-res 3D`);
+            }
         }
 
         // Dispatch completion event
@@ -561,7 +568,7 @@ class CTViewer {
         if (e.touches.length === 1) {
             e.preventDefault();
             const touch = e.touches[0];
-            this.handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY }, axis);
+            this.handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY, target: e.target }, axis);
         }
     }
 

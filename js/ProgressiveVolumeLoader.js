@@ -7,8 +7,8 @@ class ProgressiveVolumeLoader {
     constructor() {
         this.NUM_BLOCKS = 5;
         this.DOWNSAMPLE_SCALE = 4;
-        // Files larger than 1GB use streaming mode
-        this.STREAMING_THRESHOLD = 1024 * 1024 * 1024;
+        // Files larger than 2GB use streaming mode
+        this.STREAMING_THRESHOLD = 2 * 1024 * 1024 * 1024;
     }
 
     /**
@@ -24,17 +24,20 @@ class ProgressiveVolumeLoader {
         const bytesPerVoxel = this.getBytesPerVoxel(metadata.dataType);
         const totalSize = nx * ny * nz * bytesPerVoxel;
 
-        // Use streaming mode if:
-        // 1. source is null and file is provided (explicitly requested streaming)
-        // 2. file is provided and total size exceeds threshold
-        const useStreaming = file && (source === null || totalSize > this.STREAMING_THRESHOLD);
-
-        if (useStreaming) {
-            console.log(`Progressive loader: Using streaming mode for ${(totalSize / (1024*1024*1024)).toFixed(2)} GB file`);
-            return this.loadProgressiveStreaming(file, metadata, callbacks);
+        // Route based on data availability and size:
+        if (file && source === null) {
+            if (totalSize > this.STREAMING_THRESHOLD) {
+                // Very large: streaming mode (never loads full data into memory)
+                console.log(`Progressive loader: Using streaming mode for ${(totalSize / (1024*1024*1024)).toFixed(2)} GB file`);
+                return this.loadProgressiveStreaming(file, metadata, callbacks);
+            } else {
+                // Medium: hybrid mode (quick preview, then full data in background)
+                console.log(`Progressive loader: Using hybrid mode for ${(totalSize / (1024*1024)).toFixed(0)} MB file`);
+                return this.loadProgressiveHybrid(file, metadata, callbacks);
+            }
         }
 
-        // Standard mode: full data in memory
+        // Standard mode: full data already in memory
         const arrayBuffer = source;
         const fullData = this.parseRawData(arrayBuffer, metadata);
 
@@ -170,6 +173,83 @@ class ProgressiveVolumeLoader {
     }
 
     /**
+     * Hybrid mode for medium-sized volumes (50MB-2GB).
+     * Shows a low-res preview immediately by sampling slices from file,
+     * then reads the full file in background and swaps to in-memory data.
+     */
+    async loadProgressiveHybrid(file, metadata, callbacks) {
+        const [nx, ny, nz] = metadata.dimensions;
+        const bytesPerVoxel = this.getBytesPerVoxel(metadata.dataType);
+
+        // Phase 1: Quick low-res preview from file (reads ~1/4 of slices)
+        await this.yieldToUI();
+
+        console.log('Progressive loader (hybrid): Creating low-res preview from file...');
+        const t0 = performance.now();
+        const { lowResData, lowResDims, min, max } = await this.downsampleVolumeStreaming(
+            file, metadata, this.DOWNSAMPLE_SCALE
+        );
+
+        const lowResVolume = {
+            dimensions: lowResDims,
+            dataType: metadata.dataType,
+            spacing: metadata.spacing ? metadata.spacing.map(s => s * this.DOWNSAMPLE_SCALE) : [1, 1, 1],
+            data: lowResData,
+            min: min,
+            max: max
+        };
+
+        // Create temporary StreamingVolumeData for immediate display.
+        // Disable async loads — full data will be available shortly,
+        // and file reads would compete with the full-file read below.
+        const blockBoundaries = this.calculateBlockBoundaries(nz, this.NUM_BLOCKS);
+        const streamingData = new StreamingVolumeData(metadata, file, blockBoundaries);
+        streamingData.setLowResData(lowResVolume, min, max);
+        streamingData.markFullyLoaded();
+        streamingData.disableAsyncLoads = true;
+
+        console.log(`Progressive loader (hybrid): Low-res ready (${lowResDims.join('x')}) in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+        if (callbacks.onLowResReady) {
+            callbacks.onLowResReady(lowResVolume, streamingData);
+        }
+
+        // Phase 2: Read full file in background
+        await this.yieldToUI();
+
+        console.log('Progressive loader (hybrid): Reading full file into memory...');
+        const tRead = performance.now();
+        const arrayBuffer = await file.arrayBuffer();
+        console.log(`Progressive loader (hybrid): File read complete in ${((performance.now() - tRead) / 1000).toFixed(1)}s`);
+
+        const fullData = this.parseRawData(arrayBuffer, metadata);
+
+        // Phase 3: Create ProgressiveVolumeData with full data
+        const progressiveData = new ProgressiveVolumeData(metadata, fullData, blockBoundaries);
+        progressiveData.setLowResData(lowResVolume, min, max);
+
+        // Activate all blocks (data is in memory)
+        for (let i = 0; i < this.NUM_BLOCKS; i++) {
+            progressiveData.activateBlock(i);
+        }
+        progressiveData.markFullyLoaded();
+
+        // Swap volume data — caller replaces references
+        if (callbacks.onFullDataReady) {
+            callbacks.onFullDataReady(progressiveData);
+        }
+
+        // Yield so the re-rendered views paint before the next phase
+        await this.yieldToUI();
+
+        if (callbacks.onAllBlocksReady) {
+            callbacks.onAllBlocksReady();
+        }
+
+        console.log(`Progressive loader (hybrid): Complete in ${((performance.now() - t0) / 1000).toFixed(1)}s total`);
+        return progressiveData;
+    }
+
+    /**
      * Get bytes per voxel for a data type
      */
     getBytesPerVoxel(dataType) {
@@ -257,12 +337,7 @@ class ProgressiveVolumeLoader {
      * Read a Blob as ArrayBuffer
      */
     readBlob(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = () => reject(new Error('Failed to read blob'));
-            reader.readAsArrayBuffer(blob);
-        });
+        return blob.arrayBuffer();
     }
 
     /**

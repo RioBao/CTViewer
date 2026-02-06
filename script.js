@@ -57,6 +57,102 @@ class ImageViewer {
         this.dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
         this.dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
         this.dropZone.addEventListener('drop', (e) => this.handleDrop(e));
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => this.handleKeyDown(e));
+    }
+
+    handleKeyDown(e) {
+        // Don't handle shortcuts when typing in inputs
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+            return;
+        }
+
+        switch (e.key) {
+            case '+':
+            case '=':
+                e.preventDefault();
+                this.zoomIn();
+                break;
+            case '-':
+                e.preventDefault();
+                this.zoomOut();
+                break;
+            case 'r':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.resetView();
+                }
+                break;
+            case 'c':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.toggleCrosshairs();
+                }
+                break;
+            case 'f':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.toggleFullscreen();
+                }
+                break;
+            case 'o':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.fileInput.click();
+                }
+                break;
+            case 'ArrowLeft':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, -1);
+                }
+                break;
+            case 'ArrowRight':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, 1);
+                }
+                break;
+            case 'ArrowUp':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, -10);
+                }
+                break;
+            case 'ArrowDown':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, 10);
+                }
+                break;
+            case 'Home':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.navigateToSliceEdge(this.ctViewer.state.activeView, 'first');
+                }
+                break;
+            case 'End':
+                if (this.ctViewer && this.ctViewer.state.activeView) {
+                    e.preventDefault();
+                    this.navigateToSliceEdge(this.ctViewer.state.activeView, 'last');
+                }
+                break;
+            case 'Escape':
+                if (this.ctViewer && this.ctViewer.isRoiMode()) {
+                    this.toggleRoiMode();
+                }
+                break;
+        }
+    }
+
+    navigateToSliceEdge(axis, edge) {
+        if (!this.ctViewer || !this.ctViewer.volumeData) return;
+        const [nx, ny, nz] = this.ctViewer.volumeData.dimensions;
+        const maxSlice = axis === 'xy' ? nz - 1 : axis === 'xz' ? ny - 1 : nx - 1;
+        const target = edge === 'first' ? 0 : maxSlice;
+        const current = this.ctViewer.state.slices[axis];
+        this.ctViewer.navigateSlice(axis, target - current);
     }
 
     async handleFiles(files) {
@@ -116,7 +212,8 @@ class ImageViewer {
     }
 
     handleDragLeave(e) {
-        if (e.target === this.dropZone) {
+        // Check if we're actually leaving the drop zone (not just entering a child)
+        if (!this.dropZone.contains(e.relatedTarget)) {
             this.dropZone.classList.remove('drag-over');
         }
     }
@@ -283,6 +380,14 @@ class ImageViewer {
             this.zoomLevel.textContent = `${Math.round(e.detail.zoom * 100)}%`;
         });
 
+        // Listen for range change events (e.g., from ROI selection) to sync histogram
+        document.addEventListener('rangechange', (e) => {
+            const { min, max } = e.detail;
+            if (this.histogram) {
+                this.histogram.setRange(min, max);
+            }
+        });
+
         // Listen for crosshair position change events
         document.addEventListener('crosshairchange', (e) => {
             const { x, y, z, value } = e.detail;
@@ -437,6 +542,20 @@ class ImageViewer {
             onBlockReady: (blockIndex, zStart, zEnd) => {
                 // Call CTViewer's handler
                 this.ctViewer.handleBlockReady(blockIndex, zStart, zEnd);
+            },
+            onFullDataReady: (newVolumeData) => {
+                // Hybrid mode: full data loaded, swap from streaming to in-memory
+                progressiveData = newVolumeData;
+                this.ctViewer.progressiveVolume = newVolumeData;
+                this.ctViewer.volumeData = newVolumeData;
+
+                // Re-render all views with high-res data
+                this.ctViewer.renderAllViews();
+
+                // Skip histogram update — low-res histogram is already adequate
+                // and recomputing from ~695M voxels freezes the UI for seconds
+
+                console.log('Hybrid mode: Swapped to in-memory volume data');
             },
             onAllBlocksReady: () => {
                 // Update UI to show loading complete
