@@ -137,12 +137,8 @@ const WebGLUtils = {
         else if (dataType === 'float32') bytesPerVoxel = 4;
         const sourceBytes = voxelCount * bytesPerVoxel;
 
-        // GPU texture size - uint8 stays as R8, but uint16/float32 become R32F
-        // R32F uses 4 bytes per voxel on GPU
-        let gpuBytesPerVoxel = 1;
-        if (dataType !== 'uint8') {
-            gpuBytesPerVoxel = 4; // R32F format
-        }
+        // GPU texture size - all types normalized to R8 (1 byte per voxel)
+        const gpuBytesPerVoxel = 1;
         const gpuBytes = voxelCount * gpuBytesPerVoxel;
 
         // Memory thresholds

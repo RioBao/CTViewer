@@ -105,30 +105,27 @@ class WebGLMIPRenderer {
             gl.bindTexture(gl.TEXTURE_3D, this.volumeTexture);
 
             // Set texture parameters
-            // Note: R32F textures require NEAREST filtering unless OES_texture_float_linear is available
+            // R8 supports LINEAR filtering natively — smoother MIP rendering
             gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-            // Determine format and prepare data based on type
-            let internalFormat, format, type, data;
+            // All data types upload as R8 (uint8) — 1 byte/voxel instead of 4
+            // R8 automatically normalizes [0,255] to [0.0,1.0] in the shader
+            let data;
             const dataType = volumeData.dataType.toLowerCase();
 
             if (dataType === 'uint8') {
-                // uint8: Direct upload as R8
-                internalFormat = gl.R8;
-                format = gl.RED;
-                type = gl.UNSIGNED_BYTE;
                 data = volumeData.data;
             } else {
-                // uint16 and float32: Normalize to float32 [0,1]
-                internalFormat = gl.R32F;
-                format = gl.RED;
-                type = gl.FLOAT;
-                data = this.normalizeToFloat32(volumeData.data, volumeData.min, volumeData.max);
+                data = this.normalizeToUint8(volumeData.data, volumeData.min, volumeData.max);
             }
+
+            const internalFormat = gl.R8;
+            const format = gl.RED;
+            const type = gl.UNSIGNED_BYTE;
 
             // Upload texture data
             gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -153,7 +150,8 @@ class WebGLMIPRenderer {
                 return false;
             }
 
-            console.log(`WebGL: Volume texture uploaded ${nx}x${ny}x${nz}`);
+            const texMB = (nx * ny * nz / (1024 * 1024)).toFixed(0);
+            console.log(`WebGL: Volume texture uploaded ${nx}x${ny}x${nz} (${texMB}MB as R8)`);
 
             // Store dimensions and mark as loaded
             this.volumeDimensions = [nx, ny, nz];
@@ -179,14 +177,14 @@ class WebGLMIPRenderer {
     }
 
     /**
-     * Normalize typed array data to float32 in [0,1] range
+     * Normalize typed array data to uint8 [0,255] range
      * @param {TypedArray} data
      * @param {number} min - Data minimum
      * @param {number} max - Data maximum
-     * @returns {Float32Array}
+     * @returns {Uint8Array}
      */
-    normalizeToFloat32(data, min, max) {
-        const result = new Float32Array(data.length);
+    normalizeToUint8(data, min, max) {
+        const result = new Uint8Array(data.length);
         const range = max - min;
 
         if (range === 0) {
@@ -194,8 +192,9 @@ class WebGLMIPRenderer {
             return result;
         }
 
+        const scale = 255 / range;
         for (let i = 0; i < data.length; i++) {
-            result[i] = (data[i] - min) / range;
+            result[i] = Math.round((data[i] - min) * scale);
         }
 
         return result;

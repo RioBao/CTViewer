@@ -274,11 +274,11 @@ class CTViewer {
         if (this.renderer3D && !this.singleViewMode) {
             const fullResVolume = this.progressiveVolume.getFullVolumeData();
             const [nx, ny, nz] = fullResVolume.dimensions;
-            const memMB = nx * ny * nz * 4 / (1024 * 1024); // Float32 size
-            if (memMB <= 512) {
+            const memMB = nx * ny * nz / (1024 * 1024); // R8 = 1 byte/voxel
+            if (memMB <= 1536) {
                 this.renderer3D.loadVolume(fullResVolume);
             } else {
-                console.log(`CTViewer: Skipping 3D upload (${memMB.toFixed(0)}MB > 512MB limit), keeping low-res 3D`);
+                console.log(`CTViewer: Skipping 3D upload (${memMB.toFixed(0)}MB > 1536MB limit), keeping low-res 3D`);
             }
         }
 
