@@ -1,6 +1,6 @@
 # Industrial CT Viewer
 
-A modern web-based CT (Computed Tomography) viewer for industrial inspection and non-destructive testing. Supports both standard 2D images and 3D CT volumes with synchronized orthogonal slice views.
+A modern web-based CT (Computed Tomography) viewer for industrial inspection and non-destructive testing. Supports both standard 2D images and 3D CT volumes with synchronized orthogonal slice views. Currently only CERA volumes with .volumeInfo is supported
 
 ## Features
 
@@ -31,16 +31,7 @@ A modern web-based CT (Computed Tomography) viewer for industrial inspection and
 - TIFF (single-page)
 
 ### 3D CT Volumes
-- **RAW binary files** with separate JSON metadata
-  - Metadata format:
-    ```json
-    {
-      "dimensions": [width, height, depth],
-      "dataType": "uint8|uint16|float32",
-      "byteOrder": "little-endian",
-      "spacing": [1.0, 1.0, 1.0],
-      "description": "Optional description"
-    }
+- **RAW binary files** with separate .volumeInfo metadata (CERA format)
     ```
 - Multi-page TIFF (planned)
 
