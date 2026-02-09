@@ -1,7 +1,75 @@
 class FileParser {
     constructor() {
         this.supportedImageFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
-        this.supportedMedicalFormats = ['tiff', 'tif', 'raw'];
+        this.supportedMedicalFormats = ['tiff', 'tif', 'raw', 'dcm', 'nii', 'nii.gz'];
+        this.dicomLoader = new DicomLoader();
+        this.niftiLoader = new NiftiLoader();
+    }
+
+    /**
+     * Group files by type (async to allow DICOM detection)
+     * @param {FileList|Array} files
+     * @returns {Promise<Array>} Array of file groups
+     */
+    async groupFilesAsync(files) {
+        const fileArray = Array.from(files);
+        const niftiGroups = [];
+        const dicomCandidates = [];
+        const remaining = [];
+
+        for (const file of fileArray) {
+            const lower = file.name.toLowerCase();
+            const ext = this.getFileExtension(file.name).toLowerCase();
+
+            if (this.isNiftiFileName(lower)) {
+                niftiGroups.push({
+                    type: 'nifti',
+                    file: file,
+                    name: file.name
+                });
+                continue;
+            }
+
+            if (ext === 'dcm') {
+                dicomCandidates.push(file);
+                continue;
+            }
+
+            if (this.isKnownNonDicom(ext)) {
+                remaining.push(file);
+                continue;
+            }
+
+            dicomCandidates.push(file);
+        }
+
+        const dicomFiles = [];
+        const notDicom = [];
+
+        for (const file of dicomCandidates) {
+            try {
+                if (await this.dicomLoader.isDicomFile(file)) {
+                    dicomFiles.push(file);
+                } else {
+                    notDicom.push(file);
+                }
+            } catch (e) {
+                notDicom.push(file);
+            }
+        }
+
+        const groups = this.groupFiles(remaining.concat(notDicom));
+
+        if (niftiGroups.length > 0) {
+            groups.push(...niftiGroups);
+        }
+
+        if (dicomFiles.length > 0) {
+            const dicomGroups = await this.dicomLoader.scanSeries(dicomFiles);
+            groups.push(...dicomGroups);
+        }
+
+        return groups;
     }
 
     /**
@@ -94,6 +162,25 @@ class FileParser {
     getFileExtension(filename) {
         const parts = filename.split('.');
         return parts.length > 1 ? parts[parts.length - 1] : '';
+    }
+
+    /**
+     * Check if filename is NIfTI (.nii or .nii.gz)
+     */
+    isNiftiFileName(filename) {
+        const lower = filename.toLowerCase();
+        return lower.endsWith('.nii') || lower.endsWith('.nii.gz');
+    }
+
+    /**
+     * Determine if extension is a known non-DICOM type
+     */
+    isKnownNonDicom(ext) {
+        if (ext === 'raw' || ext === 'json' || ext === 'volumeinfo') return true;
+        if (ext === 'tiff' || ext === 'tif') return true;
+        if (this.supportedImageFormats.includes(ext)) return true;
+        if (ext === 'nii' || ext === 'gz') return true;
+        return false;
     }
 
     /**
@@ -781,9 +868,30 @@ class FileParser {
         if (ext === 'raw') return 'raw';
         if (ext === 'json') return 'json';
         if (ext === 'tiff' || ext === 'tif') return 'tiff';
+        if (ext === 'dcm') return 'dicom';
+        if (this.isNiftiFileName(file.name)) return 'nifti';
         if (this.supportedImageFormats.includes(ext)) return '2d-image';
 
         return 'unknown';
+    }
+
+    /**
+     * Load a DICOM series and convert to VolumeData
+     * @param {object} seriesGroup
+     * @param {Function} progressCallback
+     * @returns {Promise<VolumeData>}
+     */
+    async loadDICOMSeries(seriesGroup, progressCallback) {
+        return this.dicomLoader.loadSeries(seriesGroup, progressCallback);
+    }
+
+    /**
+     * Load a NIfTI file and convert to VolumeData
+     * @param {File} file
+     * @returns {Promise<VolumeData>}
+     */
+    async loadNifti(file) {
+        return this.niftiLoader.loadNifti(file);
     }
 
     /**

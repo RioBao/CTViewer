@@ -157,15 +157,48 @@ class ImageViewer {
 
     async handleFiles(files) {
         try {
+            const fileArray = Array.from(files);
+            const hasRaw = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'raw');
+            const hasJson = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'json');
+            const hasVolumeinfo = fileArray.some(file => {
+                const name = file.name.toLowerCase();
+                return name.endsWith('.raw.volumeinfo') || this.fileParser.getFileExtension(name) === 'volumeinfo';
+            });
+
             // Group files by type (pairs .raw with .json, etc.)
-            const fileGroups = this.fileParser.groupFiles(files);
+            const fileGroups = await this.fileParser.groupFilesAsync(files);
 
             if (fileGroups.length === 0) {
-                alert('No valid files selected');
+                if (hasRaw && !hasJson && !hasVolumeinfo) {
+                    alert('RAW file selected without metadata. Please select the matching .json (or .raw.volumeinfo) file at the same time.');
+                } else if (hasRaw) {
+                    alert('RAW file selected without matching metadata. Ensure the .json or .raw.volumeinfo has the same base name and select both files together.');
+                } else {
+                    alert('No valid files selected');
+                }
                 return;
             }
 
-            // Process first group (for now, handle one dataset at a time)
+            const dicomGroups = fileGroups.filter(g => g.type === 'dicom-series');
+            if (dicomGroups.length > 0) {
+                let selected = dicomGroups[0];
+                if (dicomGroups.length > 1) {
+                    console.warn('Multiple DICOM series detected; auto-selecting the largest series');
+                    selected = dicomGroups.reduce((best, current) => {
+                        return (current.files.length > best.files.length) ? current : best;
+                    }, dicomGroups[0]);
+                }
+                await this.loadDICOMSeries(selected);
+                return;
+            }
+
+            const niftiGroup = fileGroups.find(g => g.type === 'nifti');
+            if (niftiGroup) {
+                await this.loadNifti(niftiGroup);
+                return;
+            }
+
+            // Process first remaining group (for now, handle one dataset at a time)
             const firstGroup = fileGroups[0];
 
             if (firstGroup.type === '3d-raw') {
@@ -579,6 +612,79 @@ class ImageViewer {
             callbacks,
             fileGroup.volumeinfoFile
         );
+    }
+
+    async loadDICOMSeries(seriesGroup) {
+        try {
+            this.showLoadingIndicator('Loading DICOM series...');
+
+            const volumeData = await this.fileParser.loadDICOMSeries(
+                seriesGroup,
+                (progress) => {
+                    this.updateLoadingProgress(progress);
+                }
+            );
+
+            // Switch to CT mode
+            this.switchToCTMode();
+
+            // Load volume into CT viewer
+            const info = this.ctViewer.loadVolume(volumeData);
+
+            // Initialize histogram with volume data
+            if (this.histogram) {
+                this.histogram.setVolume(volumeData);
+            }
+
+            // Update UI
+            this.fileName.textContent = seriesGroup.name || 'DICOM Series';
+            const [nx, ny, nz] = info.dimensions;
+            this.imageInfo.textContent = `${nx}×${ny}×${nz} | DICOM ${info.dataType}`;
+
+            // Initialize slice indicators
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+
+            this.hideLoadingIndicator();
+        } catch (error) {
+            this.hideLoadingIndicator();
+            throw error;
+        }
+    }
+
+    async loadNifti(fileGroup) {
+        try {
+            this.showLoadingIndicator('Loading NIfTI...');
+
+            const volumeData = await this.fileParser.loadNifti(fileGroup.file);
+
+            // Switch to CT mode
+            this.switchToCTMode();
+
+            // Load volume into CT viewer
+            const info = this.ctViewer.loadVolume(volumeData);
+
+            // Initialize histogram with volume data
+            if (this.histogram) {
+                this.histogram.setVolume(volumeData);
+            }
+
+            // Update UI
+            this.fileName.textContent = fileGroup.name || 'NIfTI';
+            const [nx, ny, nz] = info.dimensions;
+            this.imageInfo.textContent = `${nx}×${ny}×${nz} | NIfTI ${info.dataType}`;
+
+            // Initialize slice indicators
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+
+            this.hideLoadingIndicator();
+        } catch (error) {
+            this.hideLoadingIndicator();
+            throw error;
+        }
     }
 
     async loadTIFF(fileGroup) {

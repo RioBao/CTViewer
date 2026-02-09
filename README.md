@@ -33,13 +33,17 @@ A modern web-based CT (Computed Tomography) viewer for industrial inspection and
 ### 3D CT Volumes
 - **RAW binary files** with separate .volumeInfo metadata (CERA format)
     ```
+- **DICOM series** (uncompressed, Explicit/Implicit VR Little Endian)
+  - Select multiple DICOM files in the file picker (or drag and drop)
+  - If multiple series are present, the largest series is auto-selected and a warning is logged
+- **NIfTI** (.nii, .nii.gz) - first volume only for 4D datasets
 - Multi-page TIFF (planned)
 
 ## Usage
 
 ### Getting Started
 1. Open `index.html` in a modern web browser
-2. Click "Open" to select images or drag and drop files onto the viewer
+2. Click "Open" to select files (including DICOM series) or drag and drop files onto the viewer
 
 ### 2D Images
 - Select one or more standard image files
@@ -60,6 +64,16 @@ A modern web-based CT (Computed Tomography) viewer for industrial inspection and
    - **Ctrl + wheel**: Synchronized zoom across all views
    - **Click and drag**: Synchronized pan across all views
    - **Contrast/Brightness sliders**: Adjust image appearance
+
+### DICOM Series
+1. Click "Open" and select multiple files from the DICOM series (or drag and drop the files)
+2. If multiple series are detected, the viewer auto-selects the largest series and logs a warning
+3. The viewer switches to CT mode automatically
+
+### NIfTI
+1. Click "Open" and select a `.nii` or `.nii.gz` file
+2. The viewer loads the first volume for 4D files and switches to CT mode
+3. RGB24 NIfTI volumes are converted to grayscale for display
 
 ## Keyboard Shortcuts
 
@@ -88,6 +102,8 @@ D:\Programming\Viewer\
 │   ├── SliceRenderer.js    # Canvas-based slice rendering
 │   ├── ImageProcessor.js   # Contrast, brightness, window/level
 │   ├── FileParser.js       # File type detection and parsing
+│   ├── DicomLoader.js      # DICOM series parsing (uncompressed)
+│   ├── NiftiLoader.js      # NIfTI parsing (.nii/.nii.gz)
 │   └── CTViewer.js         # CT viewing orchestrator with state management
 ├── test-data/              # Sample volumes for testing
 │   ├── README.md           # Guide for adding custom data
@@ -190,7 +206,7 @@ Requires:
 
 Planned features (not yet implemented):
 - [ ] 3D volume rendering (WebGL)
-- [ ] DICOM format support (if needed for medical cross-compatibility)
+- [ ] Compressed DICOM transfer syntaxes (JPEG/JPEG2000, RLE)
 - [ ] Measurement tools (distance, angle, ROI)
 - [ ] Annotations and labels
 - [ ] Multi-volume comparison

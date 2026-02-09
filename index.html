@@ -28,7 +28,7 @@
                     <!-- Placeholder shown when no volume loaded -->
                     <div class="placeholder" id="placeholder">
                         <p>Drop images here or click "Open" to select files</p>
-                        <p class="hint">Supports 2D: JPG, PNG, TIFF | 3D: RAW+JSON, RAW+volumeinfo</p>
+                        <p class="hint">Supports 2D: JPG, PNG, TIFF | 3D: RAW+JSON, RAW+volumeinfo, DICOM series, NIfTI</p>
                     </div>
 
                     <!-- Volume viewer (2x2 grid for 3D, single view for 2D) -->
@@ -109,7 +109,7 @@
         </div>
     </div>
 
-    <input type="file" id="fileInput" multiple accept="image/*,.raw,.json,.tiff,.tif,.volumeinfo" style="display: none;">
+    <input type="file" id="fileInput" multiple accept="image/*,.raw,.json,.tiff,.tif,.volumeinfo,.dcm,.nii,.nii.gz" style="display: none;">
 
     <!-- JavaScript modules -->
     <script src="js/VolumeData.js"></script>
@@ -118,6 +118,8 @@
     <script src="js/ProgressiveVolumeData.js"></script>
     <script src="js/StreamingVolumeData.js"></script>
     <script src="js/ProgressiveVolumeLoader.js"></script>
+    <script src="js/DicomLoader.js"></script>
+    <script src="js/NiftiLoader.js"></script>
     <script src="js/FileParser.js"></script>
     <script src="js/MIPRaycaster.js"></script>
     <script src="js/WebGLUtils.js"></script>
