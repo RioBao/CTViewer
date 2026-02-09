@@ -340,6 +340,9 @@ class ImageViewer {
         // 3D quality selector
         const quality3DSelect = document.getElementById('quality3DSelect');
         if (quality3DSelect) {
+            if (this.ctViewer && this.ctViewer.renderer3D) {
+                this.ctViewer.renderer3D.setQuality(quality3DSelect.value);
+            }
             quality3DSelect.addEventListener('change', (e) => {
                 if (this.ctViewer && this.ctViewer.renderer3D) {
                     this.ctViewer.renderer3D.setQuality(e.target.value);

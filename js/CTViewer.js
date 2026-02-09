@@ -34,7 +34,7 @@ class CTViewer {
 
         // Crosshair state - current 3D position
         this.crosshairPosition = { x: 0, y: 0, z: 0 };
-        this.crosshairEnabled = true;
+        this.crosshairEnabled = false;
         this.crosshairDragging = false;
         this.crosshairDragAxis = null; // Which view is being dragged
 
