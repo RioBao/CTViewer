@@ -20,7 +20,7 @@ class DicomLoader {
             '0028,0101': 'US', // BitsStored
             '0028,0103': 'US', // PixelRepresentation
             '0028,1052': 'DS', // RescaleIntercept
-            '0028,1053': 'DS'  // RescaleSlope
+            '0028,1053': 'DS' // RescaleSlope
         };
     }
 
@@ -29,7 +29,9 @@ class DicomLoader {
         const buffer = await file.slice(0, 132).arrayBuffer();
         const view = new DataView(buffer);
         const magic = view.getUint32(128, false);
-        return magic === 0x4449434d; // 'DICM'
+        if (magic === 0x4449434d) return true; // 'DICM'
+        // Heuristic: some vendors omit the preamble
+        return this.isLikelyDicomWithoutPreamble(view);
     }
 
     getTransferSyntax(transferSyntaxUID) {
@@ -311,32 +313,39 @@ class DicomLoader {
         const buffer = await file.arrayBuffer();
         const view = new DataView(buffer);
 
-        if (!this.hasPreamble(view)) {
-            throw new Error('Missing DICM preamble (not supported)');
-        }
-
-        let offset = 132;
+        let offset = 0;
         const meta = {};
-        offset = this.parseMetaHeader(view, offset, meta);
+        let explicitVR = true;
+        let littleEndian = true;
+        let transferSyntaxUID = null;
 
-        const transferSyntaxUID = meta.transferSyntaxUID || '1.2.840.10008.1.2.1';
-        const ts = this.getTransferSyntax(transferSyntaxUID);
-
-        if (!ts) {
-            throw new Error(`Unsupported transfer syntax: ${transferSyntaxUID}`);
-        }
-        if (ts.compressed) {
-            throw new Error('Compressed DICOM not supported');
-        }
-        if (!ts.littleEndian) {
-            throw new Error('Big-endian DICOM not supported');
+        if (this.hasPreamble(view)) {
+            offset = 132;
+            offset = this.parseMetaHeader(view, offset, meta);
+            transferSyntaxUID = meta.transferSyntaxUID || '1.2.840.10008.1.2.1';
+            const ts = this.getTransferSyntax(transferSyntaxUID);
+            if (!ts) {
+                throw new Error(`Unsupported transfer syntax: ${transferSyntaxUID}`);
+            }
+            if (ts.compressed) {
+                throw new Error('Compressed DICOM not supported');
+            }
+            if (!ts.littleEndian) {
+                throw new Error('Big-endian DICOM not supported');
+            }
+            explicitVR = ts.explicitVR;
+            littleEndian = ts.littleEndian;
+        } else {
+            // No preamble: assume little-endian, guess explicit VR based on first tag
+            explicitVR = this.guessExplicitVR(view);
+            littleEndian = true;
         }
 
         const info = {
             file,
             transferSyntaxUID,
-            explicitVR: ts.explicitVR,
-            littleEndian: ts.littleEndian,
+            explicitVR: explicitVR,
+            littleEndian: littleEndian,
             rows: null,
             cols: null,
             bitsAllocated: null,
@@ -401,6 +410,29 @@ class DicomLoader {
         if (view.byteLength < 132) return false;
         const magic = view.getUint32(128, false);
         return magic === 0x4449434d;
+    }
+
+    isLikelyDicomWithoutPreamble(view) {
+        if (view.byteLength < 8) return false;
+        const group = view.getUint16(0, true);
+        const element = view.getUint16(2, true);
+        if (group % 2 !== 0) return false;
+        const plausibleGroups = new Set([0x0008, 0x0010, 0x0020, 0x0028, 0x7fe0]);
+        if (!plausibleGroups.has(group) && group > 0x7fe0) return false;
+        return element <= 0xffff;
+    }
+
+    guessExplicitVR(view) {
+        if (view.byteLength < 8) return true;
+        const vrBytes = [view.getUint8(4), view.getUint8(5)];
+        const vr = String.fromCharCode(vrBytes[0], vrBytes[1]);
+        const known = this.longLengthVR;
+        const validVR = new Set([
+            'AE','AS','AT','CS','DA','DS','DT','FD','FL','IS','LO','LT','OB','OD','OF','OL','OW',
+            'PN','SH','SL','SQ','SS','ST','TM','UC','UI','UL','UN','UR','US','UT'
+        ]);
+        if (validVR.has(vr)) return true;
+        return false;
     }
 
     parseMetaHeader(view, offset, meta) {

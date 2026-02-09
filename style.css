@@ -460,3 +460,30 @@ button.active:hover {
     font-size: 0.8rem;
     color: #888;
 }
+
+/* Tool buttons */
+.tool-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.tool-button {
+    flex: 1 1 45%;
+    min-width: 90px;
+    text-align: center;
+}
+
+.tool-button[data-icon="roi"] {
+    position: relative;
+    font-size: 0;
+}
+
+.tool-button[data-icon="roi"]::before {
+    content: "";
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-radius: 2px;
+}
