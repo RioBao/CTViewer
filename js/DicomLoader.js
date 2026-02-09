@@ -46,11 +46,23 @@ class DicomLoader {
     async scanSeries(files) {
         const seriesMap = new Map();
         const results = [];
+        let warnedMissingSeriesUid = false;
 
         for (const file of files) {
             try {
                 const info = await this.parseDicomFile(file, { headerOnly: true });
-                if (!info || !info.seriesUID) {
+                let seriesKey = null;
+                if (info && info.seriesUID && info.seriesUID.trim()) {
+                    seriesKey = info.seriesUID.trim();
+                } else if (info) {
+                    seriesKey = this.buildFallbackSeriesKey(info);
+                    if (seriesKey && !warnedMissingSeriesUid) {
+                        console.warn('DICOM SeriesInstanceUID missing; grouping slices by fallback metadata.');
+                        warnedMissingSeriesUid = true;
+                    }
+                }
+
+                if (!info || !seriesKey) {
                     const key = `unknown-${file.name}`;
                     seriesMap.set(key, {
                         type: 'dicom-series',
@@ -61,16 +73,16 @@ class DicomLoader {
                     continue;
                 }
 
-                if (!seriesMap.has(info.seriesUID)) {
-                    seriesMap.set(info.seriesUID, {
+                if (!seriesMap.has(seriesKey)) {
+                    seriesMap.set(seriesKey, {
                         type: 'dicom-series',
-                        seriesUID: info.seriesUID,
-                        name: info.seriesDescription || info.seriesUID,
+                        seriesUID: seriesKey,
+                        name: info.seriesDescription || seriesKey,
                         files: []
                     });
                 }
 
-                seriesMap.get(info.seriesUID).files.push(file);
+                seriesMap.get(seriesKey).files.push(file);
             } catch (e) {
                 console.warn(`Skipping file ${file.name}: ${e.message}`);
             }
@@ -78,6 +90,42 @@ class DicomLoader {
 
         seriesMap.forEach(value => results.push(value));
         return results;
+    }
+
+    buildFallbackSeriesKey(info) {
+        const parts = [];
+
+        if (info.seriesDescription) {
+            parts.push(`desc=${info.seriesDescription}`);
+        }
+
+        if (Number.isFinite(info.rows) && Number.isFinite(info.cols)) {
+            parts.push(`size=${info.cols}x${info.rows}`);
+        }
+
+        if (Number.isFinite(info.bitsAllocated)) {
+            parts.push(`bits=${info.bitsAllocated}`);
+        }
+
+        if (Number.isFinite(info.samplesPerPixel)) {
+            parts.push(`spp=${info.samplesPerPixel}`);
+        }
+
+        if (info.photometricInterpretation) {
+            parts.push(`photo=${info.photometricInterpretation}`);
+        }
+
+        if (Array.isArray(info.imageOrientation) && info.imageOrientation.length) {
+            const orient = info.imageOrientation.map((v) => Number(v).toFixed(5)).join(',');
+            parts.push(`orient=${orient}`);
+        }
+
+        if (Array.isArray(info.pixelSpacing) && info.pixelSpacing.length) {
+            const spacing = info.pixelSpacing.map((v) => Number(v).toFixed(5)).join(',');
+            parts.push(`spacing=${spacing}`);
+        }
+
+        return parts.length ? `fallback:${parts.join('|')}` : null;
     }
 
     async loadSeries(seriesGroup, progressCallback) {
