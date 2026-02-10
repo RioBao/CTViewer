@@ -267,20 +267,10 @@ class CTViewer {
     handleAllBlocksReady() {
         if (!this.progressiveVolume) return;
 
-        console.log('CTViewer: All blocks loaded, updating 3D renderer');
+        console.log('CTViewer: All blocks loaded, full-res 3D available on demand');
 
-        // Upload full-resolution volume to 3D renderer if it fits in GPU memory.
-        // For large volumes, keep the low-res 3D (already loaded from handleLowResReady).
-        if (this.renderer3D && !this.singleViewMode) {
-            const fullResVolume = this.progressiveVolume.getFullVolumeData();
-            const [nx, ny, nz] = fullResVolume.dimensions;
-            const memMB = nx * ny * nz / (1024 * 1024); // R8 = 1 byte/voxel
-            if (memMB <= 1536) {
-                this.renderer3D.loadVolume(fullResVolume);
-            } else {
-                console.log(`CTViewer: Skipping 3D upload (${memMB.toFixed(0)}MB > 1536MB limit), keeping low-res 3D`);
-            }
-        }
+        // Do not auto-upload full-res 3D to avoid UI stalls.
+        // The UI can request higher-res 3D explicitly.
 
         // Dispatch completion event
         document.dispatchEvent(new CustomEvent('volumeloadcomplete', {

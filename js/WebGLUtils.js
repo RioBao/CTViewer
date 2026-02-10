@@ -191,5 +191,13 @@ const WebGLUtils = {
             recommendation,
             memoryInfo: memInfo
         };
+    },
+
+    /**
+     * Shared threshold for volume size decisions (bytes)
+     * Used for streaming mode and 3D full-res upload gating.
+     */
+    getVolumeStreamingThresholdBytes() {
+        return 2 * 1024 * 1024 * 1024; // 2GB
     }
 };

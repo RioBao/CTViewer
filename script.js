@@ -3,6 +3,7 @@ class ImageViewer {
         this.fileParser = new FileParser();
         this.ctViewer = null;
         this.histogram = null;
+        this.cachedMid3DVolume = null;
 
         this.initElements();
         this.initEventListeners();
@@ -38,6 +39,10 @@ class ImageViewer {
         this.handleMax = document.getElementById('handleMax');
         this.histogramMin = document.getElementById('histogramMin');
         this.histogramMax = document.getElementById('histogramMax');
+
+        // 3D resolution controls
+        this.resolution3DSelect = document.getElementById('resolution3DSelect');
+        this.resolution3DStatus = document.getElementById('resolution3DStatus');
     }
 
     initEventListeners() {
@@ -164,15 +169,16 @@ class ImageViewer {
                 const name = file.name.toLowerCase();
                 return name.endsWith('.raw.volumeinfo') || this.fileParser.getFileExtension(name) === 'volumeinfo';
             });
+            const hasDat = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'dat');
 
             // Group files by type (pairs .raw with .json, etc.)
             const fileGroups = await this.fileParser.groupFilesAsync(files);
 
             if (fileGroups.length === 0) {
-                if (hasRaw && !hasJson && !hasVolumeinfo) {
-                    alert('RAW file selected without metadata. Please select the matching .json (or .raw.volumeinfo) file at the same time.');
+                if (hasRaw && !hasJson && !hasVolumeinfo && !hasDat) {
+                    alert('RAW file selected without metadata. Please select the matching .json, .raw.volumeinfo, or .dat file at the same time.');
                 } else if (hasRaw) {
-                    alert('RAW file selected without matching metadata. Ensure the .json or .raw.volumeinfo has the same base name and select both files together.');
+                    alert('RAW file selected without matching metadata. Ensure the .json, .raw.volumeinfo, or .dat has the same base name and select both files together.');
                 } else {
                     alert('No valid files selected');
                 }
@@ -365,37 +371,20 @@ class ImageViewer {
             });
         }
 
-        // Enhance 3D button
-        const enhance3DBtn = document.getElementById('enhance3DBtn');
-        const enhance3DStatus = document.getElementById('enhance3DStatus');
-        if (enhance3DBtn) {
-            enhance3DBtn.addEventListener('click', async () => {
-                if (!this.ctViewer || !this.ctViewer.canEnhance3D()) return;
-
-                enhance3DBtn.disabled = true;
-                enhance3DBtn.textContent = 'Enhancing...';
-                if (enhance3DStatus) enhance3DStatus.textContent = '0%';
-
-                const success = await this.ctViewer.enhance3D((progress) => {
-                    if (enhance3DStatus) enhance3DStatus.textContent = `${progress}%`;
-                });
-
-                if (success) {
-                    enhance3DBtn.textContent = 'Enhanced';
-                    if (enhance3DStatus) enhance3DStatus.textContent = '';
-                } else {
-                    enhance3DBtn.textContent = 'Enhance 3D';
-                    enhance3DBtn.disabled = false;
-                    if (enhance3DStatus) enhance3DStatus.textContent = 'Failed';
-                }
+        // 3D resolution selector
+        if (this.resolution3DSelect) {
+            this.resolution3DSelect.addEventListener('change', async (e) => {
+                const value = e.target.value;
+                await this.set3DResolution(value);
             });
         }
 
-        // Enable enhance button when volume load completes (if streaming)
+        document.addEventListener('volumelowresready', () => {
+            this.update3DResolutionOptions('low');
+        });
+
         document.addEventListener('volumeloadcomplete', () => {
-            if (enhance3DBtn && this.ctViewer && this.ctViewer.canEnhance3D()) {
-                enhance3DBtn.disabled = false;
-            }
+            this.update3DResolutionOptions();
         });
 
         // Listen for slice change events from CT viewer
@@ -433,8 +422,164 @@ class ImageViewer {
         });
     }
 
+    reset3DResolutionCache() {
+        this.cachedMid3DVolume = null;
+    }
+
+    update3DResolutionOptions(preferredValue = null) {
+        const select = this.resolution3DSelect;
+        if (!select) return;
+
+        const ct = this.ctViewer;
+        const renderer3D = ct ? ct.renderer3D : null;
+        const gl = renderer3D ? renderer3D.gl : null;
+
+        const lowVolume = ct && ct.lowResVolume ? ct.lowResVolume : null;
+        const lowDims = lowVolume ? lowVolume.dimensions : null;
+
+        const baseDims = ct && ct.progressiveVolume
+            ? ct.progressiveVolume.dimensions
+            : (ct && ct.volumeData ? ct.volumeData.dimensions : null);
+
+        const fullAvailable = !!ct && !!baseDims && !(ct.progressiveVolume && ct.progressiveVolume.isStreaming);
+        const fullDims = fullAvailable ? baseDims : null;
+
+        const dataType = (ct && ct.volumeData && ct.volumeData.dataType) ||
+            (ct && ct.progressiveVolume && ct.progressiveVolume.dataType) ||
+            (lowVolume && lowVolume.dataType);
+
+        const midAvailable = !!ct && typeof ct.canEnhance3D === 'function' && ct.canEnhance3D();
+        const midDims = midAvailable && baseDims
+            ? baseDims.map((value) => Math.ceil(value / 2))
+            : null;
+
+        const MAX_3D_MB = WebGLUtils.getVolumeStreamingThresholdBytes() / (1024 * 1024);
+
+        const canUseDims = (dims) => {
+            if (!dims) return { enabled: false, reason: 'Not available' };
+            if (!gl || !dataType) return { enabled: true };
+            const memCheck = WebGLUtils.checkGPUMemory(gl, dims, dataType);
+            const memMB = memCheck && memCheck.memoryInfo
+                ? parseFloat(memCheck.memoryInfo.gpuMegabytes)
+                : 0;
+            if (!memCheck.canLoad) {
+                return { enabled: false, reason: memCheck.recommendation || 'Exceeds GPU limits' };
+            }
+            if (memMB && memMB > MAX_3D_MB) {
+                return { enabled: false, reason: `~${memMB.toFixed(0)}MB exceeds ${MAX_3D_MB}MB limit` };
+            }
+            return { enabled: true, warning: memCheck.recommendation };
+        };
+
+        const formatDims = (dims) => dims ? `${dims[0]}x${dims[1]}x${dims[2]}` : '';
+        const applyOption = (value, label, state) => {
+            const option = select.querySelector(`option[value="${value}"]`);
+            if (!option) return;
+            let text = label;
+            if (!state.enabled && value === 'full' && state.reason) {
+                text = 'Full (Memory limited)';
+            }
+            option.textContent = text;
+            option.disabled = !state.enabled;
+            option.title = state.reason || '';
+        };
+
+        const lowState = canUseDims(lowDims);
+        const midState = midAvailable ? canUseDims(midDims) : { enabled: false, reason: 'Not available' };
+        const fullState = fullAvailable ? canUseDims(fullDims) : { enabled: false, reason: 'Not available' };
+
+        applyOption('low', lowDims ? `Low (${formatDims(lowDims)})` : 'Low', lowState);
+        applyOption('mid', midDims ? `Mid (${formatDims(midDims)})` : 'Mid', midState);
+        applyOption('full', fullDims ? `Full (${formatDims(fullDims)})` : 'Full', fullState);
+
+        let desired = preferredValue || select.value;
+        const currentOption = select.querySelector(`option[value="${desired}"]`);
+        if (!currentOption || currentOption.disabled) {
+            const firstEnabled = Array.from(select.options).find((opt) => !opt.disabled);
+            desired = firstEnabled ? firstEnabled.value : select.value;
+        }
+
+        if (desired && select.value !== desired) {
+            select.value = desired;
+        }
+
+        if (this.resolution3DStatus) {
+            this.resolution3DStatus.textContent = '';
+        }
+    }
+
+    async set3DResolution(value) {
+        if (!this.ctViewer || !this.ctViewer.renderer3D) return;
+
+        if (this.resolution3DStatus) {
+            this.resolution3DStatus.textContent = '';
+        }
+
+        if (value === 'low') {
+            const lowVolume = this.ctViewer.lowResVolume || this.ctViewer.volumeData;
+            if (lowVolume) {
+                this.ctViewer.renderer3D.loadVolume(lowVolume);
+            }
+            return;
+        }
+
+        if (value === 'mid') {
+            if (this.cachedMid3DVolume) {
+                this.ctViewer.renderer3D.loadVolume(this.cachedMid3DVolume);
+                return;
+            }
+
+            if (!this.ctViewer.canEnhance3D || !this.ctViewer.canEnhance3D()) {
+                return;
+            }
+
+            if (this.resolution3DSelect) {
+                this.resolution3DSelect.disabled = true;
+            }
+            if (this.resolution3DStatus) {
+                this.resolution3DStatus.textContent = '0%';
+            }
+
+            const success = await this.ctViewer.enhance3D((progress) => {
+                if (this.resolution3DStatus) {
+                    this.resolution3DStatus.textContent = `${progress}%`;
+                }
+            });
+
+            if (this.resolution3DSelect) {
+                this.resolution3DSelect.disabled = false;
+            }
+
+            if (success) {
+                this.cachedMid3DVolume = this.ctViewer.renderer3D.volumeData;
+                if (this.resolution3DStatus) {
+                    this.resolution3DStatus.textContent = '';
+                }
+            } else if (this.resolution3DStatus) {
+                this.resolution3DStatus.textContent = 'Failed';
+            }
+            return;
+        }
+
+        if (value === 'full') {
+            let fullVolume = null;
+            if (this.ctViewer.progressiveVolume &&
+                typeof this.ctViewer.progressiveVolume.getFullVolumeData === 'function') {
+                fullVolume = this.ctViewer.progressiveVolume.getFullVolumeData();
+            } else if (this.ctViewer.volumeData) {
+                fullVolume = this.ctViewer.volumeData;
+            }
+
+            if (fullVolume) {
+                this.ctViewer.renderer3D.loadVolume(fullVolume);
+            }
+        }
+    }
+
     async loadCTVolume(fileGroup) {
         try {
+            this.reset3DResolutionCache();
+
             // Show loading indicator
             this.showLoadingIndicator('Loading 3D volume...');
 
@@ -464,7 +609,8 @@ class ImageViewer {
             (progress) => {
                 this.updateLoadingProgress(progress);
             },
-            fileGroup.volumeinfoFile
+            fileGroup.volumeinfoFile,
+            fileGroup.datFile
         );
 
         // Switch to CT mode
@@ -472,6 +618,7 @@ class ImageViewer {
 
         // Load volume into CT viewer
         const info = this.ctViewer.loadVolume(volumeData);
+        this.update3DResolutionOptions('full');
 
         // Initialize histogram with volume data
         if (this.histogram) {
@@ -569,6 +716,8 @@ class ImageViewer {
                     this.histogram.setVolume(progData);
                 }
 
+                this.update3DResolutionOptions('low');
+
                 // Hide loading indicator - user can interact now
                 this.hideLoadingIndicator();
 
@@ -585,8 +734,30 @@ class ImageViewer {
                 this.ctViewer.progressiveVolume = newVolumeData;
                 this.ctViewer.volumeData = newVolumeData;
 
-                // Re-render all views with high-res data
-                this.ctViewer.renderAllViews();
+                // Re-render views with high-res data in a staggered way to avoid UI stalls
+                const schedule = (cb) => {
+                    if (typeof requestAnimationFrame === 'function') {
+                        requestAnimationFrame(cb);
+                    } else {
+                        setTimeout(cb, 0);
+                    }
+                };
+
+                this.ctViewer.renderView('xy');
+
+                if (!this.ctViewer.singleViewMode) {
+                    schedule(() => {
+                        this.ctViewer.renderView('xz');
+                        schedule(() => {
+                            this.ctViewer.renderView('yz');
+                            if (this.ctViewer.crosshairEnabled) {
+                                this.ctViewer.drawCrosshairs();
+                            }
+                        });
+                    });
+                } else if (this.ctViewer.crosshairEnabled) {
+                    this.ctViewer.drawCrosshairs();
+                }
 
                 // Skip histogram update — low-res histogram is already adequate
                 // and recomputing from ~695M voxels freezes the UI for seconds
@@ -604,6 +775,8 @@ class ImageViewer {
                 // Call CTViewer's handler
                 this.ctViewer.handleAllBlocksReady();
 
+                this.update3DResolutionOptions();
+
                 console.log('Progressive loading complete');
             }
         };
@@ -613,12 +786,14 @@ class ImageViewer {
             fileGroup.rawFile,
             fileGroup.jsonFile,
             callbacks,
-            fileGroup.volumeinfoFile
+            fileGroup.volumeinfoFile,
+            fileGroup.datFile
         );
     }
 
     async loadDICOMSeries(seriesGroup) {
         try {
+            this.reset3DResolutionCache();
             this.showLoadingIndicator('Loading DICOM series...');
 
             const volumeData = await this.fileParser.loadDICOMSeries(
@@ -633,6 +808,7 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
             if (this.histogram) {
@@ -658,6 +834,7 @@ class ImageViewer {
 
     async loadNifti(fileGroup) {
         try {
+            this.reset3DResolutionCache();
             this.showLoadingIndicator('Loading NIfTI...');
 
             const volumeData = await this.fileParser.loadNifti(fileGroup.file);
@@ -667,6 +844,7 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
             if (this.histogram) {
@@ -692,6 +870,7 @@ class ImageViewer {
 
     async loadTIFF(fileGroup) {
         try {
+            this.reset3DResolutionCache();
             this.showLoadingIndicator('Loading TIFF...');
 
             const tiffData = await this.fileParser.loadTIFF(fileGroup.file);
@@ -704,6 +883,7 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
             if (this.histogram) {
@@ -730,6 +910,7 @@ class ImageViewer {
 
     async load2DImage(fileGroup) {
         try {
+            this.reset3DResolutionCache();
             this.showLoadingIndicator('Loading image...');
 
             const file = fileGroup.file;
@@ -740,6 +921,7 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
             if (this.histogram) {

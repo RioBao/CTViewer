@@ -114,12 +114,11 @@ class VolumeRenderer3D {
 
         const dims = this.volumeData.dimensions;
         if (this.volumeData.isLowRes || this.volumeData.isEnhanced) {
-            const label = this.volumeData.isEnhanced ? 'ENHANCED' : 'LOW RES';
+            const label = this.volumeData.isEnhanced ? 'MID RES' : 'LOW RES';
             this.volumeInfoOverlay.textContent = `${label} \u00B7 ${dims[0]}\u00D7${dims[1]}\u00D7${dims[2]}`;
             this.volumeInfoOverlay.style.display = 'block';
-            this.volumeInfoOverlay.style.background = this.volumeData.isEnhanced
-                ? 'rgba(76, 175, 80, 0.75)'
-                : 'rgba(255, 170, 0, 0.75)';
+            // Keep low-res warning styling for mid-res as well
+            this.volumeInfoOverlay.style.background = 'rgba(255, 170, 0, 0.75)';
         } else {
             this.volumeInfoOverlay.style.display = 'none';
         }

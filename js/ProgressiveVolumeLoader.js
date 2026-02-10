@@ -7,8 +7,8 @@ class ProgressiveVolumeLoader {
     constructor() {
         this.NUM_BLOCKS = 5;
         this.DOWNSAMPLE_SCALE = 4;
-        // Files larger than 2GB use streaming mode
-        this.STREAMING_THRESHOLD = 2 * 1024 * 1024 * 1024;
+        // Files larger than this threshold use streaming mode
+        this.STREAMING_THRESHOLD = WebGLUtils ? WebGLUtils.getVolumeStreamingThresholdBytes() : 2 * 1024 * 1024 * 1024;
     }
 
     /**

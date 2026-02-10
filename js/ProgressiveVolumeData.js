@@ -322,4 +322,62 @@ class ProgressiveVolumeData {
             fullyLoaded: this.fullyLoaded
         };
     }
+
+    /**
+     * Check if 3D enhancement is available (scale=2 downsample)
+     */
+    canEnhance3D() {
+        const [nx, ny, nz] = this.dimensions;
+        return nx > 1 && ny > 1 && nz > 1;
+    }
+
+    /**
+     * Create enhanced resolution volume for 3D rendering (scale=2)
+     * @param {function} onProgress - Progress callback (0-100)
+     * @returns {Promise<Object>} Enhanced volume data
+     */
+    async createEnhanced3DVolume(onProgress) {
+        const scale = 2;
+        const [nx, ny, nz] = this.dimensions;
+        const dstNx = Math.ceil(nx / scale);
+        const dstNy = Math.ceil(ny / scale);
+        const dstNz = Math.ceil(nz / scale);
+
+        const enhancedData = new this.TypedArrayConstructor(dstNx * dstNy * dstNz);
+        const sliceSize = nx * ny;
+
+        for (let dz = 0; dz < dstNz; dz++) {
+            const srcZ = dz * scale;
+            const srcZOffset = srcZ * sliceSize;
+            const dstZOffset = dz * dstNx * dstNy;
+
+            for (let dy = 0; dy < dstNy; dy++) {
+                const srcY = dy * scale;
+                const srcYOffset = srcZOffset + srcY * nx;
+                const dstYOffset = dstZOffset + dy * dstNx;
+
+                for (let dx = 0; dx < dstNx; dx++) {
+                    const srcX = dx * scale;
+                    const srcIdx = srcYOffset + srcX;
+                    const dstIdx = dstYOffset + dx;
+                    enhancedData[dstIdx] = this.data[srcIdx];
+                }
+            }
+
+            if (onProgress && dz % 5 === 0) {
+                onProgress(Math.round((dz / dstNz) * 100));
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+
+        return {
+            dimensions: [dstNx, dstNy, dstNz],
+            dataType: this.dataType,
+            spacing: this.spacing.map(s => s * scale),
+            data: enhancedData,
+            min: this.min,
+            max: this.max,
+            isEnhanced: true
+        };
+    }
 }

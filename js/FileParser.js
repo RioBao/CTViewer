@@ -1,7 +1,7 @@
 class FileParser {
     constructor() {
         this.supportedImageFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
-        this.supportedMedicalFormats = ['tiff', 'tif', 'raw', 'dcm', 'nii', 'nii.gz'];
+        this.supportedMedicalFormats = ['tiff', 'tif', 'raw', 'dcm', 'nii', 'nii.gz', 'dat'];
         this.dicomLoader = new DicomLoader();
         this.niftiLoader = new NiftiLoader();
     }
@@ -84,7 +84,7 @@ class FileParser {
         const fileMap = new Map();
         const processedFiles = new Set();
 
-        // First pass: group RAW, JSON, and volumeinfo files
+        // First pass: group RAW, JSON, volumeinfo, and DAT files
         fileArray.forEach(file => {
             const ext = this.getFileExtension(file.name).toLowerCase();
 
@@ -110,17 +110,25 @@ class FileParser {
                 }
                 fileMap.get(basename).volumeinfo = file;
                 processedFiles.add(file);
+            } else if (ext === 'dat') {
+                const basename = file.name.replace(/\.dat$/i, '');
+                if (!fileMap.has(basename)) {
+                    fileMap.set(basename, {});
+                }
+                fileMap.get(basename).dat = file;
+                processedFiles.add(file);
             }
         });
 
-        // Create groups for RAW+metadata pairs (JSON takes priority over volumeinfo)
+        // Create groups for RAW+metadata pairs (JSON takes priority over volumeinfo, then DAT)
         fileMap.forEach((fileGroup, basename) => {
-            if (fileGroup.raw && (fileGroup.json || fileGroup.volumeinfo)) {
+            if (fileGroup.raw && (fileGroup.json || fileGroup.volumeinfo || fileGroup.dat)) {
                 groups.push({
                     type: '3d-raw',
                     rawFile: fileGroup.raw,
                     jsonFile: fileGroup.json || null,
                     volumeinfoFile: fileGroup.volumeinfo || null,
+                    datFile: fileGroup.dat || null,
                     name: basename
                 });
             } else if (fileGroup.raw) {
@@ -129,6 +137,8 @@ class FileParser {
                 console.warn(`JSON file ${basename}.json found without matching RAW file`);
             } else if (fileGroup.volumeinfo) {
                 console.warn(`Volumeinfo file ${basename}.raw.volumeinfo found without matching RAW file`);
+            } else if (fileGroup.dat) {
+                console.warn(`DAT file ${basename}.dat found without matching RAW file`);
             }
         });
 
@@ -176,7 +186,7 @@ class FileParser {
      * Determine if extension is a known non-DICOM type
      */
     isKnownNonDicom(ext) {
-        if (ext === 'raw' || ext === 'json' || ext === 'volumeinfo') return true;
+        if (ext === 'raw' || ext === 'json' || ext === 'volumeinfo' || ext === 'dat') return true;
         if (ext === 'tiff' || ext === 'tif') return true;
         if (this.supportedImageFormats.includes(ext)) return true;
         if (ext === 'nii' || ext === 'gz') return true;
@@ -231,6 +241,33 @@ class FileParser {
 
             reader.onerror = () => {
                 reject(new Error('Failed to read volumeinfo file'));
+            };
+
+            reader.readAsText(file);
+        });
+    }
+
+    /**
+     * Load and parse .dat metadata file (Voreen-style)
+     * @param {File} file
+     * @returns {Promise<object>}
+     */
+    async loadDatMetadata(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                try {
+                    const metadata = this.parseDat(e.target.result);
+                    this.validateMetadata(metadata);
+                    resolve(metadata);
+                } catch (error) {
+                    reject(new Error(`Failed to parse DAT metadata: ${error.message}`));
+                }
+            };
+
+            reader.onerror = () => {
+                reject(new Error('Failed to read DAT file'));
             };
 
             reader.readAsText(file);
@@ -298,6 +335,66 @@ class FileParser {
         if (volumeSection.Description) {
             metadata.description = volumeSection.Description;
         }
+
+        return metadata;
+    }
+
+    /**
+     * Parse Voreen-style .dat metadata format into standard metadata object
+     * @param {string} content
+     * @returns {object}
+     */
+    parseDat(content) {
+        const lines = content.split('\n');
+        const map = {};
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const idx = trimmed.indexOf(':');
+            if (idx === -1) continue;
+            const key = trimmed.slice(0, idx).trim().toLowerCase();
+            const value = trimmed.slice(idx + 1).trim();
+            map[key] = value;
+        }
+
+        const resolution = (map.resolution || '').split(/\s+/).map(v => parseInt(v, 10)).filter(v => Number.isFinite(v));
+        if (resolution.length !== 3) {
+            throw new Error('Missing or invalid Resolution in DAT file');
+        }
+
+        const spacingVals = (map.slicethickness || map.spacing || '').split(/\s+/).map(v => parseFloat(v)).filter(v => Number.isFinite(v));
+        const spacing = [
+            spacingVals[0] || 1.0,
+            spacingVals[1] || 1.0,
+            spacingVals[2] || 1.0
+        ];
+
+        const format = (map.format || '').trim().toUpperCase();
+        let dataType;
+        switch (format) {
+            case 'UCHAR':
+            case 'UINT8':
+            case 'BYTE':
+                dataType = 'uint8';
+                break;
+            case 'USHORT':
+            case 'UINT16':
+                dataType = 'uint16';
+                break;
+            case 'FLOAT':
+            case 'FLOAT32':
+                dataType = 'float32';
+                break;
+            default:
+                throw new Error(`Unsupported DAT format: ${format || 'unknown'}`);
+        }
+
+        const metadata = {
+            dimensions: resolution,
+            dataType: dataType,
+            spacing: spacing
+        };
 
         return metadata;
     }
@@ -433,14 +530,15 @@ class FileParser {
     }
 
     /**
-     * Load and parse a 3D volume (RAW + JSON or volumeinfo)
+     * Load and parse a 3D volume (RAW + JSON, volumeinfo, or DAT)
      * @param {File} rawFile
-     * @param {File} jsonFile - JSON metadata file (optional if volumeinfoFile provided)
+     * @param {File} jsonFile - JSON metadata file (optional if other metadata provided)
      * @param {Function} progressCallback - Optional callback for progress updates
      * @param {File} volumeinfoFile - Volumeinfo metadata file (optional if jsonFile provided)
+     * @param {File} datFile - DAT metadata file (optional if json/volumeinfo provided)
      * @returns {Promise<VolumeData>}
      */
-    async load3DVolume(rawFile, jsonFile, progressCallback, volumeinfoFile) {
+    async load3DVolume(rawFile, jsonFile, progressCallback, volumeinfoFile, datFile) {
         try {
             // Load metadata first (JSON takes priority over volumeinfo)
             if (progressCallback) progressCallback({ stage: 'metadata', progress: 0 });
@@ -450,8 +548,10 @@ class FileParser {
                 metadata = await this.loadJSONMetadata(jsonFile);
             } else if (volumeinfoFile) {
                 metadata = await this.loadVolumeinfoMetadata(volumeinfoFile);
+            } else if (datFile) {
+                metadata = await this.loadDatMetadata(datFile);
             } else {
-                throw new Error('No metadata file provided (JSON or volumeinfo)');
+                throw new Error('No metadata file provided (JSON, volumeinfo, or DAT)');
             }
 
             // Load RAW data
@@ -475,12 +575,13 @@ class FileParser {
      * Shows low-res preview immediately, then loads blocks from center outward
      * For very large files (>1GB), uses streaming mode that never loads full data
      * @param {File} rawFile
-     * @param {File} jsonFile - JSON metadata file (optional if volumeinfoFile provided)
+     * @param {File} jsonFile - JSON metadata file (optional if other metadata provided)
      * @param {Object} callbacks - { onProgress, onLowResReady, onBlockReady, onAllBlocksReady }
      * @param {File} volumeinfoFile - Volumeinfo metadata file (optional if jsonFile provided)
+     * @param {File} datFile - DAT metadata file (optional if json/volumeinfo provided)
      * @returns {Promise<ProgressiveVolumeData|StreamingVolumeData>}
      */
-    async load3DVolumeProgressive(rawFile, jsonFile, callbacks, volumeinfoFile) {
+    async load3DVolumeProgressive(rawFile, jsonFile, callbacks, volumeinfoFile, datFile) {
         try {
             // Load metadata first (JSON takes priority over volumeinfo)
             if (callbacks.onProgress) callbacks.onProgress({ stage: 'metadata', progress: 0 });
@@ -490,8 +591,10 @@ class FileParser {
                 metadata = await this.loadJSONMetadata(jsonFile);
             } else if (volumeinfoFile) {
                 metadata = await this.loadVolumeinfoMetadata(volumeinfoFile);
+            } else if (datFile) {
+                metadata = await this.loadDatMetadata(datFile);
             } else {
-                throw new Error('No metadata file provided (JSON or volumeinfo)');
+                throw new Error('No metadata file provided (JSON, volumeinfo, or DAT)');
             }
 
             const loader = new ProgressiveVolumeLoader();
@@ -867,6 +970,7 @@ class FileParser {
 
         if (ext === 'raw') return 'raw';
         if (ext === 'json') return 'json';
+        if (ext === 'dat') return 'dat';
         if (ext === 'tiff' || ext === 'tif') return 'tiff';
         if (ext === 'dcm') return 'dicom';
         if (this.isNiftiFileName(file.name)) return 'nifti';

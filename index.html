@@ -88,6 +88,15 @@
                 <div class="sidebar-section" id="quality3DGroup">
                     <h4>3D Rendering</h4>
                     <div class="control-row">
+                        <label for="resolution3DSelect">3D Resolution</label>
+                        <select id="resolution3DSelect">
+                            <option value="low">Low</option>
+                            <option value="mid" disabled>Mid</option>
+                            <option value="full" disabled>Full</option>
+                        </select>
+                        <span id="resolution3DStatus" class="status-text"></span>
+                    </div>
+                    <div class="control-row">
                         <label for="quality3DSelect">Quality</label>
                         <select id="quality3DSelect">
                             <option value="low" selected>Low (Fast)</option>
@@ -98,10 +107,6 @@
                     <div class="control-row">
                         <label for="gamma3DSlider">Gamma <span id="gamma3DValue">1.0</span></label>
                         <input type="range" id="gamma3DSlider" min="0.1" max="4" step="0.1" value="1">
-                    </div>
-                    <div class="control-row" style="flex-direction: row; align-items: center;">
-                        <button id="enhance3DBtn" disabled title="Load higher resolution 3D volume (502? instead of 251?)">Enhance 3D</button>
-                        <span id="enhance3DStatus" class="status-text"></span>
                     </div>
                 </div>
             </div>
@@ -114,7 +119,7 @@
         </div>
     </div>
 
-    <input type="file" id="fileInput" multiple accept="image/*,.raw,.json,.tiff,.tif,.volumeinfo,.dcm,.nii,.nii.gz" style="display: none;">
+    <input type="file" id="fileInput" multiple accept="image/*,.raw,.json,.tiff,.tif,.volumeinfo,.dcm,.nii,.nii.gz,.dat" style="display: none;">
 
     <!-- JavaScript modules -->
     <script src="js/VolumeData.js"></script>
