@@ -5,10 +5,17 @@
  */
 class ProgressiveVolumeLoader {
     constructor() {
-        this.NUM_BLOCKS = 5;
-        this.DOWNSAMPLE_SCALE = 4;
+        const config = (typeof ViewerConfig !== 'undefined') ? ViewerConfig : null;
+        this.NUM_BLOCKS = (config && config.progressive && Number.isFinite(config.progressive.numBlocks))
+            ? config.progressive.numBlocks
+            : 5;
+        this.DOWNSAMPLE_SCALE = (config && config.progressive && Number.isFinite(config.progressive.downsampleScale))
+            ? config.progressive.downsampleScale
+            : 4;
         // Files larger than this threshold use streaming mode
-        this.STREAMING_THRESHOLD = WebGLUtils ? WebGLUtils.getVolumeStreamingThresholdBytes() : 2 * 1024 * 1024 * 1024;
+        this.STREAMING_THRESHOLD = WebGLUtils
+            ? WebGLUtils.getVolumeStreamingThresholdBytes()
+            : 2 * 1024 * 1024 * 1024;
     }
 
     /**

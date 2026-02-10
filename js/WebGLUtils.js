@@ -198,6 +198,11 @@ const WebGLUtils = {
      * Used for streaming mode and 3D full-res upload gating.
      */
     getVolumeStreamingThresholdBytes() {
-        return 2 * 1024 * 1024 * 1024; // 2GB
+        if (typeof ViewerConfig !== 'undefined' &&
+            ViewerConfig.limits &&
+            Number.isFinite(ViewerConfig.limits.streamingThresholdBytes)) {
+            return ViewerConfig.limits.streamingThresholdBytes;
+        }
+        return 2 * 1024 * 1024 * 1024; // 2GB fallback
     }
 };

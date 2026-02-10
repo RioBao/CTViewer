@@ -4,6 +4,7 @@ class ImageViewer {
         this.ctViewer = null;
         this.histogram = null;
         this.cachedMid3DVolume = null;
+        this.volumeState = this.createVolumeState();
 
         this.initElements();
         this.initEventListeners();
@@ -43,6 +44,8 @@ class ImageViewer {
         // 3D resolution controls
         this.resolution3DSelect = document.getElementById('resolution3DSelect');
         this.resolution3DStatus = document.getElementById('resolution3DStatus');
+
+        this.applyFormatConfig();
     }
 
     initEventListeners() {
@@ -379,14 +382,6 @@ class ImageViewer {
             });
         }
 
-        document.addEventListener('volumelowresready', () => {
-            this.update3DResolutionOptions('low');
-        });
-
-        document.addEventListener('volumeloadcomplete', () => {
-            this.update3DResolutionOptions();
-        });
-
         // Listen for slice change events from CT viewer
         document.addEventListener('slicechange', (e) => {
             const { axis, sliceIndex, totalSlices } = e.detail;
@@ -422,6 +417,58 @@ class ImageViewer {
         });
     }
 
+    applyFormatConfig() {
+        if (!this.fileInput) return;
+        if (typeof ViewerConfig === 'undefined') return;
+        const accept = ViewerConfig.accept;
+        if (accept) {
+            this.fileInput.accept = accept;
+        }
+    }
+
+    createVolumeState() {
+        return {
+            name: '',
+            dimensions: null,
+            dataType: null,
+            isStreaming: false,
+            hasFullData: false,
+            lowResVolume: null
+        };
+    }
+
+    resetVolumeState() {
+        this.volumeState = this.createVolumeState();
+    }
+
+    updateVolumeState(patch) {
+        this.volumeState = { ...this.volumeState, ...patch };
+    }
+
+    updateVolumeUI({ name, dimensions, label, loading = false }) {
+        if (!dimensions || dimensions.length !== 3) return;
+
+        const [nx, ny, nz] = dimensions;
+        const displayName = loading ? `${name} (loading...)` : name;
+
+        if (this.fileName) {
+            this.fileName.textContent = displayName || 'No file loaded';
+        }
+        if (this.imageInfo) {
+            this.imageInfo.textContent = `${nx}x${ny}x${nz} | ${label}`;
+        }
+
+        if (this.sliceIndicatorXY) {
+            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz / 2) + 1}/${nz}`;
+        }
+        if (this.sliceIndicatorXZ) {
+            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny / 2) + 1}/${ny}`;
+        }
+        if (this.sliceIndicatorYZ) {
+            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx / 2) + 1}/${nx}`;
+        }
+    }
+
     reset3DResolutionCache() {
         this.cachedMid3DVolume = null;
     }
@@ -434,19 +481,15 @@ class ImageViewer {
         const renderer3D = ct ? ct.renderer3D : null;
         const gl = renderer3D ? renderer3D.gl : null;
 
-        const lowVolume = ct && ct.lowResVolume ? ct.lowResVolume : null;
-        const lowDims = lowVolume ? lowVolume.dimensions : null;
+        const state = this.volumeState || this.createVolumeState();
+        const baseDims = state.dimensions;
+        const lowVolume = state.lowResVolume;
+        const lowDims = lowVolume ? lowVolume.dimensions : baseDims;
 
-        const baseDims = ct && ct.progressiveVolume
-            ? ct.progressiveVolume.dimensions
-            : (ct && ct.volumeData ? ct.volumeData.dimensions : null);
-
-        const fullAvailable = !!ct && !!baseDims && !(ct.progressiveVolume && ct.progressiveVolume.isStreaming);
+        const fullAvailable = !!baseDims && state.hasFullData && !state.isStreaming;
         const fullDims = fullAvailable ? baseDims : null;
 
-        const dataType = (ct && ct.volumeData && ct.volumeData.dataType) ||
-            (ct && ct.progressiveVolume && ct.progressiveVolume.dataType) ||
-            (lowVolume && lowVolume.dataType);
+        const dataType = state.dataType;
 
         const midAvailable = !!ct && typeof ct.canEnhance3D === 'function' && ct.canEnhance3D();
         const midDims = midAvailable && baseDims
@@ -456,17 +499,17 @@ class ImageViewer {
         const MAX_3D_MB = WebGLUtils.getVolumeStreamingThresholdBytes() / (1024 * 1024);
 
         const canUseDims = (dims) => {
-            if (!dims) return { enabled: false, reason: 'Not available' };
+            if (!dims) return { enabled: false, reason: 'Not available', reasonType: 'unavailable' };
             if (!gl || !dataType) return { enabled: true };
             const memCheck = WebGLUtils.checkGPUMemory(gl, dims, dataType);
             const memMB = memCheck && memCheck.memoryInfo
                 ? parseFloat(memCheck.memoryInfo.gpuMegabytes)
                 : 0;
             if (!memCheck.canLoad) {
-                return { enabled: false, reason: memCheck.recommendation || 'Exceeds GPU limits' };
+                return { enabled: false, reason: memCheck.recommendation || 'Exceeds GPU limits', reasonType: 'memory' };
             }
             if (memMB && memMB > MAX_3D_MB) {
-                return { enabled: false, reason: `~${memMB.toFixed(0)}MB exceeds ${MAX_3D_MB}MB limit` };
+                return { enabled: false, reason: `~${memMB.toFixed(0)}MB exceeds ${MAX_3D_MB}MB limit`, reasonType: 'memory' };
             }
             return { enabled: true, warning: memCheck.recommendation };
         };
@@ -476,7 +519,7 @@ class ImageViewer {
             const option = select.querySelector(`option[value="${value}"]`);
             if (!option) return;
             let text = label;
-            if (!state.enabled && value === 'full' && state.reason) {
+            if (!state.enabled && value === 'full' && state.reasonType === 'memory') {
                 text = 'Full (Memory limited)';
             }
             option.textContent = text;
@@ -488,7 +531,8 @@ class ImageViewer {
         const midState = midAvailable ? canUseDims(midDims) : { enabled: false, reason: 'Not available' };
         const fullState = fullAvailable ? canUseDims(fullDims) : { enabled: false, reason: 'Not available' };
 
-        applyOption('low', lowDims ? `Low (${formatDims(lowDims)})` : 'Low', lowState);
+        const lowLabelDims = lowVolume ? lowDims : null;
+        applyOption('low', lowLabelDims ? `Low (${formatDims(lowLabelDims)})` : 'Low', lowState);
         applyOption('mid', midDims ? `Mid (${formatDims(midDims)})` : 'Mid', midState);
         applyOption('full', fullDims ? `Full (${formatDims(fullDims)})` : 'Full', fullState);
 
@@ -516,7 +560,7 @@ class ImageViewer {
         }
 
         if (value === 'low') {
-            const lowVolume = this.ctViewer.lowResVolume || this.ctViewer.volumeData;
+            const lowVolume = (this.volumeState && this.volumeState.lowResVolume) || this.ctViewer.volumeData;
             if (lowVolume) {
                 this.ctViewer.renderer3D.loadVolume(lowVolume);
             }
@@ -579,12 +623,17 @@ class ImageViewer {
     async loadCTVolume(fileGroup) {
         try {
             this.reset3DResolutionCache();
+            this.resetVolumeState();
 
             // Show loading indicator
             this.showLoadingIndicator('Loading 3D volume...');
 
-            // Use progressive loading for large files (>50MB)
-            const PROGRESSIVE_THRESHOLD = 50 * 1024 * 1024;
+            // Use progressive loading for large files
+            const PROGRESSIVE_THRESHOLD = (typeof ViewerConfig !== 'undefined' &&
+                ViewerConfig.limits &&
+                Number.isFinite(ViewerConfig.limits.progressiveThresholdBytes))
+                ? ViewerConfig.limits.progressiveThresholdBytes
+                : 50 * 1024 * 1024;
             const useProgressive = fileGroup.rawFile.size > PROGRESSIVE_THRESHOLD;
 
             if (useProgressive) {
@@ -618,6 +667,15 @@ class ImageViewer {
 
         // Load volume into CT viewer
         const info = this.ctViewer.loadVolume(volumeData);
+
+        this.updateVolumeState({
+            name: fileGroup.name,
+            dimensions: info.dimensions,
+            dataType: info.dataType,
+            isStreaming: false,
+            hasFullData: true,
+            lowResVolume: null
+        });
         this.update3DResolutionOptions('full');
 
         // Initialize histogram with volume data
@@ -626,14 +684,11 @@ class ImageViewer {
         }
 
         // Update UI
-        this.fileName.textContent = fileGroup.name;
-        this.imageInfo.textContent = `${info.dimensions[0]}×${info.dimensions[1]}×${info.dimensions[2]} | ${info.dataType}`;
-
-        // Initialize slice indicators
-        const [nx, ny, nz] = info.dimensions;
-        this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-        this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-        this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+        this.updateVolumeUI({
+            name: fileGroup.name,
+            dimensions: info.dimensions,
+            label: info.dataType
+        });
 
         // Hide loading indicator
         this.hideLoadingIndicator();
@@ -699,17 +754,21 @@ class ImageViewer {
                     };
                 }
 
-                // Update UI immediately with low-res preview
-                this.fileName.textContent = fileGroup.name + ' (loading...)';
-
-                const dims = progData.dimensions;
-                this.imageInfo.textContent = `${dims[0]}×${dims[1]}×${dims[2]} | Progressive`;
-
-                // Initialize slice indicators
-                const [nx, ny, nz] = dims;
-                this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-                this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-                this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+                // Update state and UI immediately with low-res preview
+                this.updateVolumeState({
+                    name: fileGroup.name,
+                    dimensions: progData.dimensions,
+                    dataType: progData.dataType,
+                    isStreaming: !!progData.isStreaming,
+                    hasFullData: false,
+                    lowResVolume: lowResVolume
+                });
+                this.updateVolumeUI({
+                    name: fileGroup.name,
+                    dimensions: progData.dimensions,
+                    label: 'Progressive',
+                    loading: true
+                });
 
                 // Initialize histogram with progressive data
                 if (this.histogram) {
@@ -733,6 +792,10 @@ class ImageViewer {
                 progressiveData = newVolumeData;
                 this.ctViewer.progressiveVolume = newVolumeData;
                 this.ctViewer.volumeData = newVolumeData;
+                this.updateVolumeState({
+                    hasFullData: true,
+                    isStreaming: false
+                });
 
                 // Re-render views with high-res data in a staggered way to avoid UI stalls
                 const schedule = (cb) => {
@@ -766,11 +829,17 @@ class ImageViewer {
             },
             onAllBlocksReady: () => {
                 // Update UI to show loading complete
-                this.fileName.textContent = fileGroup.name;
-
-                const dims = progressiveData.dimensions;
-                const dataType = progressiveData.dataType;
-                this.imageInfo.textContent = `${dims[0]}×${dims[1]}×${dims[2]} | ${dataType}`;
+                this.updateVolumeState({
+                    name: fileGroup.name,
+                    dimensions: progressiveData.dimensions,
+                    dataType: progressiveData.dataType,
+                    hasFullData: !this.volumeState.isStreaming
+                });
+                this.updateVolumeUI({
+                    name: fileGroup.name,
+                    dimensions: progressiveData.dimensions,
+                    label: progressiveData.dataType
+                });
 
                 // Call CTViewer's handler
                 this.ctViewer.handleAllBlocksReady();
@@ -794,6 +863,7 @@ class ImageViewer {
     async loadDICOMSeries(seriesGroup) {
         try {
             this.reset3DResolutionCache();
+            this.resetVolumeState();
             this.showLoadingIndicator('Loading DICOM series...');
 
             const volumeData = await this.fileParser.loadDICOMSeries(
@@ -808,6 +878,14 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.updateVolumeState({
+                name: seriesGroup.name || 'DICOM Series',
+                dimensions: info.dimensions,
+                dataType: info.dataType,
+                isStreaming: false,
+                hasFullData: true,
+                lowResVolume: null
+            });
             this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
@@ -816,14 +894,11 @@ class ImageViewer {
             }
 
             // Update UI
-            this.fileName.textContent = seriesGroup.name || 'DICOM Series';
-            const [nx, ny, nz] = info.dimensions;
-            this.imageInfo.textContent = `${nx}×${ny}×${nz} | DICOM ${info.dataType}`;
-
-            // Initialize slice indicators
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+            this.updateVolumeUI({
+                name: seriesGroup.name || 'DICOM Series',
+                dimensions: info.dimensions,
+                label: `DICOM ${info.dataType}`
+            });
 
             this.hideLoadingIndicator();
         } catch (error) {
@@ -835,6 +910,7 @@ class ImageViewer {
     async loadNifti(fileGroup) {
         try {
             this.reset3DResolutionCache();
+            this.resetVolumeState();
             this.showLoadingIndicator('Loading NIfTI...');
 
             const volumeData = await this.fileParser.loadNifti(fileGroup.file);
@@ -844,6 +920,14 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.updateVolumeState({
+                name: fileGroup.name || 'NIfTI',
+                dimensions: info.dimensions,
+                dataType: info.dataType,
+                isStreaming: false,
+                hasFullData: true,
+                lowResVolume: null
+            });
             this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
@@ -852,14 +936,11 @@ class ImageViewer {
             }
 
             // Update UI
-            this.fileName.textContent = fileGroup.name || 'NIfTI';
-            const [nx, ny, nz] = info.dimensions;
-            this.imageInfo.textContent = `${nx}×${ny}×${nz} | NIfTI ${info.dataType}`;
-
-            // Initialize slice indicators
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+            this.updateVolumeUI({
+                name: fileGroup.name || 'NIfTI',
+                dimensions: info.dimensions,
+                label: `NIfTI ${info.dataType}`
+            });
 
             this.hideLoadingIndicator();
         } catch (error) {
@@ -871,6 +952,7 @@ class ImageViewer {
     async loadTIFF(fileGroup) {
         try {
             this.reset3DResolutionCache();
+            this.resetVolumeState();
             this.showLoadingIndicator('Loading TIFF...');
 
             const tiffData = await this.fileParser.loadTIFF(fileGroup.file);
@@ -883,6 +965,14 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.updateVolumeState({
+                name: fileGroup.name,
+                dimensions: info.dimensions,
+                dataType: info.dataType,
+                isStreaming: false,
+                hasFullData: true,
+                lowResVolume: null
+            });
             this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
@@ -891,14 +981,11 @@ class ImageViewer {
             }
 
             // Update UI
-            this.fileName.textContent = fileGroup.name;
-            const [nx, ny, nz] = info.dimensions;
-            this.imageInfo.textContent = `${nx}×${ny}×${nz} | ${info.dataType}`;
-
-            // Initialize slice indicators
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+            this.updateVolumeUI({
+                name: fileGroup.name,
+                dimensions: info.dimensions,
+                label: info.dataType
+            });
 
             this.hideLoadingIndicator();
 
@@ -911,6 +998,7 @@ class ImageViewer {
     async load2DImage(fileGroup) {
         try {
             this.reset3DResolutionCache();
+            this.resetVolumeState();
             this.showLoadingIndicator('Loading image...');
 
             const file = fileGroup.file;
@@ -921,6 +1009,14 @@ class ImageViewer {
 
             // Load volume into CT viewer
             const info = this.ctViewer.loadVolume(volumeData);
+            this.updateVolumeState({
+                name: file.name,
+                dimensions: info.dimensions,
+                dataType: info.dataType,
+                isStreaming: false,
+                hasFullData: true,
+                lowResVolume: null
+            });
             this.update3DResolutionOptions('full');
 
             // Initialize histogram with volume data
@@ -929,14 +1025,11 @@ class ImageViewer {
             }
 
             // Update UI
-            this.fileName.textContent = file.name;
-            const [nx, ny, nz] = info.dimensions;
-            this.imageInfo.textContent = `${nx}×${ny}×${nz} | ${info.dataType}`;
-
-            // Initialize slice indicators
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz/2) + 1}/${nz}`;
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny/2) + 1}/${ny}`;
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx/2) + 1}/${nx}`;
+            this.updateVolumeUI({
+                name: file.name,
+                dimensions: info.dimensions,
+                label: info.dataType
+            });
 
             this.hideLoadingIndicator();
 

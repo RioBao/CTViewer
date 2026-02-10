@@ -1,7 +1,17 @@
 class FileParser {
     constructor() {
-        this.supportedImageFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
-        this.supportedMedicalFormats = ['tiff', 'tif', 'raw', 'dcm', 'nii', 'nii.gz', 'dat'];
+        const config = (typeof ViewerConfig !== 'undefined' && ViewerConfig.formats)
+            ? ViewerConfig.formats
+            : null;
+        this.formats = config || {
+            image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+            tiff: ['tif', 'tiff'],
+            raw: ['raw'],
+            rawMetadata: ['json', 'volumeinfo', 'dat'],
+            dicom: ['dcm'],
+            nifti: ['nii', 'nii.gz']
+        };
+        this.supportedImageFormats = this.formats.image;
         this.dicomLoader = new DicomLoader();
         this.niftiLoader = new NiftiLoader();
     }
@@ -88,7 +98,7 @@ class FileParser {
         fileArray.forEach(file => {
             const ext = this.getFileExtension(file.name).toLowerCase();
 
-            if (ext === 'raw') {
+            if (this.isRawExt(ext)) {
                 const basename = file.name.replace(/\.raw$/i, '');
                 if (!fileMap.has(basename)) {
                     fileMap.set(basename, {});
@@ -148,7 +158,7 @@ class FileParser {
 
             const ext = this.getFileExtension(file.name).toLowerCase();
 
-            if (ext === 'tiff' || ext === 'tif') {
+            if (this.isTiffExt(ext)) {
                 groups.push({
                     type: 'tiff',
                     file: file,
@@ -186,8 +196,8 @@ class FileParser {
      * Determine if extension is a known non-DICOM type
      */
     isKnownNonDicom(ext) {
-        if (ext === 'raw' || ext === 'json' || ext === 'volumeinfo' || ext === 'dat') return true;
-        if (ext === 'tiff' || ext === 'tif') return true;
+        if (this.isRawExt(ext) || this.isRawMetadataExt(ext)) return true;
+        if (this.isTiffExt(ext)) return true;
         if (this.supportedImageFormats.includes(ext)) return true;
         if (ext === 'nii' || ext === 'gz') return true;
         return false;
@@ -968,15 +978,31 @@ class FileParser {
     detectFileType(file) {
         const ext = this.getFileExtension(file.name).toLowerCase();
 
-        if (ext === 'raw') return 'raw';
+        if (this.isRawExt(ext)) return 'raw';
         if (ext === 'json') return 'json';
         if (ext === 'dat') return 'dat';
-        if (ext === 'tiff' || ext === 'tif') return 'tiff';
-        if (ext === 'dcm') return 'dicom';
+        if (this.isTiffExt(ext)) return 'tiff';
+        if (this.isDicomExt(ext)) return 'dicom';
         if (this.isNiftiFileName(file.name)) return 'nifti';
         if (this.supportedImageFormats.includes(ext)) return '2d-image';
 
         return 'unknown';
+    }
+
+    isRawExt(ext) {
+        return this.formats.raw.includes(ext);
+    }
+
+    isRawMetadataExt(ext) {
+        return this.formats.rawMetadata.includes(ext);
+    }
+
+    isTiffExt(ext) {
+        return this.formats.tiff.includes(ext);
+    }
+
+    isDicomExt(ext) {
+        return this.formats.dicom.includes(ext);
     }
 
     /**
