@@ -54,6 +54,7 @@ class WebGLMIPRenderer {
             'uVolume',
             'uAzimuth',
             'uElevation',
+            'uRoll',
             'uDistance',
             'uPan',
             'uDimensions',
@@ -239,7 +240,7 @@ class WebGLMIPRenderer {
 
     /**
      * Render the volume
-     * @param {object} camera - {azimuth, elevation, distance}
+    * @param {object} camera - {azimuth, elevation, roll, distance}
      * @param {object} pan - {x, y} screen-space pan offset in pixels
      */
     render(camera, pan = { x: 0, y: 0 }) {
@@ -274,6 +275,7 @@ class WebGLMIPRenderer {
             // Set camera uniforms (convert degrees to radians)
             gl.uniform1f(this.uniforms.uAzimuth, camera.azimuth * Math.PI / 180);
             gl.uniform1f(this.uniforms.uElevation, camera.elevation * Math.PI / 180);
+            gl.uniform1f(this.uniforms.uRoll, (camera.roll || 0) * Math.PI / 180);
             gl.uniform1f(this.uniforms.uDistance, camera.distance);
 
             // Set pan offset (convert from pixels to normalized screen space)

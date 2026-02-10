@@ -33,6 +33,7 @@ class VolumeRenderer3D {
         this.camera = {
             azimuth: 30,      // Horizontal rotation (degrees)
             elevation: 20,    // Vertical rotation (degrees)
+            roll: 0,          // Rotation around world Z axis (degrees)
             distance: 1.0     // Zoom factor (1.0 = fit to viewport)
         };
 
@@ -691,6 +692,7 @@ class VolumeRenderer3D {
     resetCamera() {
         this.camera.azimuth = 30;
         this.camera.elevation = 20;
+        this.camera.roll = 0;
         this.camera.distance = 1.0;
         this.pan = { x: 0, y: 0 };
         this.renderAtQuality(this.currentQuality);

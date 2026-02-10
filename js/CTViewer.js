@@ -394,8 +394,16 @@ class CTViewer {
         // Double-click to toggle maximize/restore view
         canvas.addEventListener('dblclick', (e) => this.toggleMaximizeView(axis));
 
-        // Skip other events for 3D canvas (handled by VolumeRenderer3D)
-        if (axis === '3d') return;
+        // Track active view for 3D canvas (interaction handled by VolumeRenderer3D)
+        if (axis === '3d') {
+            canvas.addEventListener('mouseenter', () => {
+                this.state.activeView = '3d';
+            });
+            canvas.addEventListener('mousedown', () => {
+                this.state.activeView = '3d';
+            });
+            return;
+        }
 
         // Mouse wheel for slice navigation and zoom
         canvas.addEventListener('wheel', (e) => this.handleWheel(e, axis), { passive: false });

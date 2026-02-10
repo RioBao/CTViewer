@@ -1,28 +1,29 @@
-# Industrial CT Viewer
+﻿# Industrial CT Viewer
 
 A modern web-based CT (Computed Tomography) viewer for industrial inspection and non-destructive testing. Supports both standard 2D images and 3D CT volumes with synchronized orthogonal slice views.
 
 ## Features
 
 ### Standard 2D Viewing
-- 📁 Open multiple images at once
-- 🖼️ Thumbnail sidebar for quick navigation
-- 🔍 Zoom in/out (mouse wheel with Ctrl or buttons)
-- ⬅️➡️ Navigate between images
-- 🖱️ Drag to pan when zoomed in
-- 🎚️ Contrast and brightness controls
-- ⌨️ Keyboard shortcuts
-- 📱 Drag and drop support
-- 🌓 Dark theme interface
+- ðŸ“ Open multiple images at once
+- ðŸ–¼ï¸ Thumbnail sidebar for quick navigation
+- ðŸ” Zoom in/out (mouse wheel with Ctrl or buttons)
+- â¬…ï¸âž¡ï¸ Navigate between images
+- ðŸ–±ï¸ Drag to pan when zoomed in
+- ðŸŽšï¸ Contrast and brightness controls
+- âŒ¨ï¸ Keyboard shortcuts
+- ðŸ“± Drag and drop support
+- ðŸŒ“ Dark theme interface
 
 ### 3D CT Viewing
-- 🏭 2x2 grid layout with three orthogonal slice views (Axial XY, Coronal XZ, Sagittal YZ)
-- 🔄 Synchronized zoom and pan across all views
-- 📊 Mouse wheel slice navigation (per view)
-- 🎚️ Contrast and brightness controls
-- 📏 Real-time slice position indicators
-- 🗜️ Support for uint8, uint16, and float32 data types
-- 💾 Efficient slice extraction and rendering
+- ðŸ­ 2x2 grid layout with three orthogonal slice views (Axial XY, Coronal XZ, Sagittal YZ)
+- ðŸ”„ Synchronized zoom and pan across all views
+- ðŸ“Š Mouse wheel slice navigation (per view)
+- ðŸŽšï¸ Contrast and brightness controls
+- ðŸ“ Real-time slice position indicators
+- ðŸ—œï¸ Support for uint8, uint16, and float32 data types
+- ðŸ’¾ Efficient slice extraction and rendering
+- 🧠 3D resolution selector (Low/Mid/Full) with memory-limited options disabled
 
 ## Supported Formats
 
@@ -77,7 +78,7 @@ A modern web-based CT (Computed Tomography) viewer for industrial inspection and
 ## Keyboard Shortcuts
 
 ### Standard 2D Mode
-- `←` / `→` - Previous/Next image
+- `â†` / `â†’` - Previous/Next image
 - `+` / `-` - Zoom in/out
 - `0` - Reset zoom
 - `F` - Toggle fullscreen
@@ -93,22 +94,25 @@ A modern web-based CT (Computed Tomography) viewer for industrial inspection and
 
 ```
 D:\Programming\Viewer\
-├── index.html              # Main HTML structure
-├── style.css               # Styling for both 2D and 3D modes
-├── script.js               # Main orchestrator and routing
-├── js/
-│   ├── VolumeData.js       # 3D volume data container and slice extraction
-│   ├── SliceRenderer.js    # Canvas-based slice rendering
-│   ├── ImageProcessor.js   # Contrast, brightness, window/level
-│   ├── FileParser.js       # File type detection and parsing
-│   ├── DicomLoader.js      # DICOM series parsing (uncompressed)
-│   ├── NiftiLoader.js      # NIfTI parsing (.nii/.nii.gz)
-│   └── CTViewer.js         # CT viewing orchestrator with state management
-├── test-data/              # Sample volumes for testing
-│   ├── README.md           # Guide for adding custom data
-│   ├── simple_test.raw/.json
-│   └── checker_test.raw/.json
-└── README.md               # This file
+â”œâ”€â”€ index.html              # Main HTML structure
+â”œâ”€â”€ style.css               # Styling for both 2D and 3D modes
+â”œâ”€â”€ script.js               # Main orchestrator and routing
+â”œâ”€â”€ js/
+â”‚   â”œâ”€â”€ VolumeData.js       # 3D volume data container and slice extraction
+â”‚   â”œâ”€â”€ SliceRenderer.js    # Canvas-based slice rendering
+â”‚   â”œâ”€â”€ ImageProcessor.js   # Contrast, brightness, window/level
+â”‚   â”œâ”€â”€ FileParser.js       # File type detection and parsing
+â”‚   â”œâ”€â”€ controls.js         # UI buttons, shortcuts, drag-and-drop
+â”‚   â”œâ”€â”€ status.js           # Loading/progress/status UI
+â”‚   â”œâ”€â”€ loaders/            # Format handlers (raw/dicom/nifti/tiff)
+â”‚   â”œâ”€â”€ DicomLoader.js      # DICOM series parsing (uncompressed)
+â”‚   â”œâ”€â”€ NiftiLoader.js      # NIfTI parsing (.nii/.nii.gz)
+â”‚   â””â”€â”€ CTViewer.js         # CT viewing orchestrator with state management
+â”œâ”€â”€ test-data/              # Sample volumes for testing
+â”‚   â”œâ”€â”€ README.md           # Guide for adding custom data
+â”‚   â”œâ”€â”€ simple_test.raw/.json
+â”‚   â””â”€â”€ checker_test.raw/.json
+â””â”€â”€ README.md               # This file
 ```
 
 ### Technology Stack
@@ -127,8 +131,8 @@ python generate_simple_test.py
 ```
 
 This creates test data in the `test-data/` folder:
-- `simple_test.raw` + `simple_test.json` - 16³ gradient volume (4 KB)
-- `checker_test.raw` + `checker_test.json` - 32³ checkerboard pattern (32 KB)
+- `simple_test.raw` + `simple_test.json` - 16Â³ gradient volume (4 KB)
+- `checker_test.raw` + `checker_test.json` - 32Â³ checkerboard pattern (32 KB)
 
 ### Test Workflow
 1. Open `index.html` in your browser
@@ -176,16 +180,16 @@ See `test-data/README.md` for detailed instructions on how to add your own 3D CT
 - **File size limits**: Tested up to ~50MB volumes
 
 ### Recommended Volume Sizes
-- **Small**: 64³ or smaller - Instant loading
-- **Medium**: 128³ to 256³ - Fast loading
-- **Large**: 512³ - May take a few seconds to load
+- **Small**: 64Â³ or smaller - Instant loading
+- **Medium**: 128Â³ to 256Â³ - Fast loading
+- **Large**: 512Â³ - May take a few seconds to load
 
 ## Browser Compatibility
 
 Tested on:
-- ✅ Chrome/Edge (recommended)
-- ✅ Firefox
-- ✅ Safari (may have minor rendering differences)
+- âœ… Chrome/Edge (recommended)
+- âœ… Firefox
+- âœ… Safari (may have minor rendering differences)
 
 Requires:
 - Modern browser with ES6 support
@@ -220,7 +224,7 @@ Planned features (not yet implemented):
 ### Issue: "Failed to load 3D volume"
 - Verify both .raw and .json files are selected
 - Check JSON metadata format is correct
-- Ensure dimensions match file size: `fileSize = width × height × depth × bytesPerPixel`
+- Ensure dimensions match file size: `fileSize = width Ã— height Ã— depth Ã— bytesPerPixel`
 
 ### Issue: Slices appear corrupted
 - Verify data is in C-order (row-major)

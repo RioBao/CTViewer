@@ -97,24 +97,40 @@ class ViewerControls {
                 }
                 break;
             case 'ArrowLeft':
+                if (this.handle3DRotation('left')) {
+                    e.preventDefault();
+                    break;
+                }
                 if (viewer.ctViewer && viewer.ctViewer.state.activeView) {
                     e.preventDefault();
                     viewer.ctViewer.navigateSlice(viewer.ctViewer.state.activeView, -1);
                 }
                 break;
             case 'ArrowRight':
+                if (this.handle3DRotation('right')) {
+                    e.preventDefault();
+                    break;
+                }
                 if (viewer.ctViewer && viewer.ctViewer.state.activeView) {
                     e.preventDefault();
                     viewer.ctViewer.navigateSlice(viewer.ctViewer.state.activeView, 1);
                 }
                 break;
             case 'ArrowUp':
+                if (this.handle3DRotation('up')) {
+                    e.preventDefault();
+                    break;
+                }
                 if (viewer.ctViewer && viewer.ctViewer.state.activeView) {
                     e.preventDefault();
                     viewer.ctViewer.navigateSlice(viewer.ctViewer.state.activeView, -10);
                 }
                 break;
             case 'ArrowDown':
+                if (this.handle3DRotation('down')) {
+                    e.preventDefault();
+                    break;
+                }
                 if (viewer.ctViewer && viewer.ctViewer.state.activeView) {
                     e.preventDefault();
                     viewer.ctViewer.navigateSlice(viewer.ctViewer.state.activeView, 10);
@@ -138,6 +154,28 @@ class ViewerControls {
                 }
                 break;
         }
+    }
+
+    handle3DRotation(direction) {
+        const viewer = this.viewer;
+        if (!viewer.ctViewer || !viewer.ctViewer.renderer3D) return false;
+        const active3D = viewer.ctViewer.state.activeView === '3d' ||
+            viewer.ctViewer.maximizedView === '3d';
+        if (!active3D) return false;
+
+        const step = 5;
+        const camera = viewer.ctViewer.renderer3D.getCamera();
+        viewer.ctViewer.renderer3D.pan = { x: 0, y: 0 };
+        if (direction === 'left') camera.roll -= step;
+        if (direction === 'right') camera.roll += step;
+        if (direction === 'up') camera.elevation -= step;
+        if (direction === 'down') camera.elevation += step;
+
+        camera.elevation = Math.max(-89, Math.min(89, camera.elevation));
+        camera.roll = camera.roll % 360;
+
+        viewer.ctViewer.renderer3D.setCamera(camera);
+        return true;
     }
 
     navigateToSliceEdge(axis, edge) {

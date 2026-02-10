@@ -38,6 +38,7 @@ uniform sampler3D uVolume;
 // Camera parameters
 uniform float uAzimuth;      // Horizontal rotation (radians)
 uniform float uElevation;    // Vertical rotation (radians)
+uniform float uRoll;         // Rotation around world Z (radians)
 uniform float uDistance;     // Zoom factor (1.0 = fit)
 uniform vec2 uPan;           // Screen-space pan offset (normalized)
 
@@ -58,11 +59,13 @@ out vec4 fragColor;
 
 void main() {
     // Calculate rotation matrices from camera angles
-    // Match CPU: Y-axis rotation for azimuth, X-axis for elevation
+    // Match CPU: Y-axis rotation for azimuth, X-axis for elevation, roll about forward
     float cosAz = cos(uAzimuth);
     float sinAz = sin(uAzimuth);
     float cosEl = cos(uElevation);
     float sinEl = sin(uElevation);
+    float cosRoll = cos(uRoll);
+    float sinRoll = sin(uRoll);
 
     // Forward direction (viewing into volume)
     vec3 forward = vec3(sinAz * cosEl, -sinEl, cosAz * cosEl);
@@ -70,6 +73,25 @@ void main() {
     vec3 right = vec3(cosAz, 0.0, -sinAz);
     // Up direction
     vec3 up = vec3(sinAz * sinEl, cosEl, cosAz * sinEl);
+    // Apply roll around world Z axis
+    vec3 rightRolled = vec3(
+        right.x * cosRoll - right.y * sinRoll,
+        right.x * sinRoll + right.y * cosRoll,
+        right.z
+    );
+    vec3 upRolled = vec3(
+        up.x * cosRoll - up.y * sinRoll,
+        up.x * sinRoll + up.y * cosRoll,
+        up.z
+    );
+    vec3 forwardRolled = vec3(
+        forward.x * cosRoll - forward.y * sinRoll,
+        forward.x * sinRoll + forward.y * cosRoll,
+        forward.z
+    );
+    right = rightRolled;
+    up = upRolled;
+    forward = forwardRolled;
 
     // Convert UV to centered coordinates [-1, 1]
     vec2 uv = (vUV - 0.5) * 2.0;

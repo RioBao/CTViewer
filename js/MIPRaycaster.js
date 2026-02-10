@@ -51,7 +51,7 @@ class MIPRaycaster {
     /**
      * Render MIP projection to ImageData
      * @param {ImageData} imageData - Output buffer
-     * @param {object} camera - Camera parameters {azimuth, elevation, distance}
+     * @param {object} camera - Camera parameters {azimuth, elevation, roll, distance}
      * @param {object} settings - Render settings {stepSize, threshold}
      */
     render(imageData, camera, settings) {
@@ -72,28 +72,53 @@ class MIPRaycaster {
         // Compute rotation matrices from camera angles
         const azRad = camera.azimuth * Math.PI / 180;
         const elRad = camera.elevation * Math.PI / 180;
+        const rollRad = (camera.roll || 0) * Math.PI / 180;
 
         // Rotation matrix components (Y-axis rotation for azimuth, X-axis for elevation)
         const cosAz = Math.cos(azRad);
         const sinAz = Math.sin(azRad);
         const cosEl = Math.cos(elRad);
         const sinEl = Math.sin(elRad);
+        const cosRoll = Math.cos(rollRad);
+        const sinRoll = Math.sin(rollRad);
 
-        // Combined rotation: first elevation (X), then azimuth (Y)
+        // Combined rotation: elevation (X), azimuth (Y), then roll (Z about forward)
         // Forward direction (into screen)
-        const fwdX = sinAz * cosEl;
-        const fwdY = -sinEl;
-        const fwdZ = cosAz * cosEl;
+        let fwdX = sinAz * cosEl;
+        let fwdY = -sinEl;
+        let fwdZ = cosAz * cosEl;
 
         // Right direction
-        const rightX = cosAz;
-        const rightY = 0;
-        const rightZ = -sinAz;
+        let rightX = cosAz;
+        let rightY = 0;
+        let rightZ = -sinAz;
 
         // Up direction
-        const upX = sinAz * sinEl;
-        const upY = cosEl;
-        const upZ = cosAz * sinEl;
+        let upX = sinAz * sinEl;
+        let upY = cosEl;
+        let upZ = cosAz * sinEl;
+
+        // Apply roll around world Z axis
+        const rightXRolled = rightX * cosRoll - rightY * sinRoll;
+        const rightYRolled = rightX * sinRoll + rightY * cosRoll;
+        const rightZRolled = rightZ;
+
+        const upXRolled = upX * cosRoll - upY * sinRoll;
+        const upYRolled = upX * sinRoll + upY * cosRoll;
+        const upZRolled = upZ;
+
+        const fwdXRolled = fwdX * cosRoll - fwdY * sinRoll;
+        const fwdYRolled = fwdX * sinRoll + fwdY * cosRoll;
+        const fwdZRolled = fwdZ;
+        rightX = rightXRolled;
+        rightY = rightYRolled;
+        rightZ = rightZRolled;
+        upX = upXRolled;
+        upY = upYRolled;
+        upZ = upZRolled;
+        fwdX = fwdXRolled;
+        fwdY = fwdYRolled;
+        fwdZ = fwdZRolled;
 
         // Calculate view bounds - project all 8 corners of volume
         const corners = [
