@@ -7,8 +7,19 @@ class ImageViewer {
         this.volumeState = this.createVolumeState();
 
         this.initElements();
-        this.initEventListeners();
+        this.status = new ViewerStatus(this);
+        this.controls = new ViewerControls(this);
+        this.loaders = {
+            raw: new RawVolumeLoader(this),
+            dicom: new DicomSeriesLoader(this),
+            nifti: new NiftiVolumeLoader(this),
+            tiff: new TiffVolumeLoader(this)
+        };
+
+        this.status.applyFormatConfig();
         this.initCTComponents();
+        this.status.bind();
+        this.controls.bind();
     }
 
     initElements() {
@@ -45,122 +56,6 @@ class ImageViewer {
         this.resolution3DSelect = document.getElementById('resolution3DSelect');
         this.resolution3DStatus = document.getElementById('resolution3DStatus');
 
-        this.applyFormatConfig();
-    }
-
-    initEventListeners() {
-        // Button events
-        document.getElementById('openBtn').addEventListener('click', () => this.fileInput.click());
-        document.getElementById('zoomInBtn').addEventListener('click', () => this.zoomIn());
-        document.getElementById('zoomOutBtn').addEventListener('click', () => this.zoomOut());
-        document.getElementById('resetBtn').addEventListener('click', () => this.resetView());
-        document.getElementById('fullscreenBtn').addEventListener('click', () => this.toggleFullscreen());
-        document.getElementById('roiBtn').addEventListener('click', () => this.toggleRoiMode());
-        document.getElementById('crosshairBtn').addEventListener('click', () => this.toggleCrosshairs());
-
-        // File input
-        this.fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
-
-        // Drag and drop
-        this.dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
-        this.dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
-        this.dropZone.addEventListener('drop', (e) => this.handleDrop(e));
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => this.handleKeyDown(e));
-    }
-
-    handleKeyDown(e) {
-        // Don't handle shortcuts when typing in inputs
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
-            return;
-        }
-
-        switch (e.key) {
-            case '+':
-            case '=':
-                e.preventDefault();
-                this.zoomIn();
-                break;
-            case '-':
-                e.preventDefault();
-                this.zoomOut();
-                break;
-            case 'r':
-                if (!e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    this.resetView();
-                }
-                break;
-            case 'c':
-                if (!e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    this.toggleCrosshairs();
-                }
-                break;
-            case 'f':
-                if (!e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    this.toggleFullscreen();
-                }
-                break;
-            case 'o':
-                if (!e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    this.fileInput.click();
-                }
-                break;
-            case 'ArrowLeft':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, -1);
-                }
-                break;
-            case 'ArrowRight':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, 1);
-                }
-                break;
-            case 'ArrowUp':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, -10);
-                }
-                break;
-            case 'ArrowDown':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.ctViewer.navigateSlice(this.ctViewer.state.activeView, 10);
-                }
-                break;
-            case 'Home':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.navigateToSliceEdge(this.ctViewer.state.activeView, 'first');
-                }
-                break;
-            case 'End':
-                if (this.ctViewer && this.ctViewer.state.activeView) {
-                    e.preventDefault();
-                    this.navigateToSliceEdge(this.ctViewer.state.activeView, 'last');
-                }
-                break;
-            case 'Escape':
-                if (this.ctViewer && this.ctViewer.isRoiMode()) {
-                    this.toggleRoiMode();
-                }
-                break;
-        }
-    }
-
-    navigateToSliceEdge(axis, edge) {
-        if (!this.ctViewer || !this.ctViewer.volumeData) return;
-        const [nx, ny, nz] = this.ctViewer.volumeData.dimensions;
-        const maxSlice = axis === 'xy' ? nz - 1 : axis === 'xz' ? ny - 1 : nx - 1;
-        const target = edge === 'first' ? 0 : maxSlice;
-        const current = this.ctViewer.state.slices[axis];
-        this.ctViewer.navigateSlice(axis, target - current);
     }
 
     async handleFiles(files) {
@@ -197,13 +92,13 @@ class ImageViewer {
                         return (current.files.length > best.files.length) ? current : best;
                     }, dicomGroups[0]);
                 }
-                await this.loadDICOMSeries(selected);
+                await this.loaders.dicom.load(selected);
                 return;
             }
 
             const niftiGroup = fileGroups.find(g => g.type === 'nifti');
             if (niftiGroup) {
-                await this.loadNifti(niftiGroup);
+                await this.loaders.nifti.load(niftiGroup);
                 return;
             }
 
@@ -211,9 +106,9 @@ class ImageViewer {
             const firstGroup = fileGroups[0];
 
             if (firstGroup.type === '3d-raw') {
-                await this.loadCTVolume(firstGroup);
+                await this.loaders.raw.load(firstGroup);
             } else if (firstGroup.type === 'tiff') {
-                await this.loadTIFF(firstGroup);
+                await this.loaders.tiff.load(firstGroup);
             } else if (firstGroup.type === '2d-image') {
                 await this.load2DImage(firstGroup);
             }
@@ -222,99 +117,6 @@ class ImageViewer {
             alert(`Error loading files: ${error.message}`);
         }
     }
-
-    // Zoom controls - delegate to CT viewer
-    zoomIn() {
-        if (this.ctViewer) {
-            const state = this.ctViewer.getState();
-            this.ctViewer.updateZoom(state.zoom + 0.2);
-        }
-    }
-
-    zoomOut() {
-        if (this.ctViewer) {
-            const state = this.ctViewer.getState();
-            this.ctViewer.updateZoom(state.zoom - 0.2);
-        }
-    }
-
-    resetView() {
-        if (this.ctViewer) {
-            this.ctViewer.resetView();
-            this.ctViewer.resetDataRange();
-        }
-        if (this.histogram) {
-            this.histogram.reset();
-        }
-    }
-
-    handleDragOver(e) {
-        e.preventDefault();
-        this.dropZone.classList.add('drag-over');
-    }
-
-    handleDragLeave(e) {
-        // Check if we're actually leaving the drop zone (not just entering a child)
-        if (!this.dropZone.contains(e.relatedTarget)) {
-            this.dropZone.classList.remove('drag-over');
-        }
-    }
-
-    handleDrop(e) {
-        e.preventDefault();
-        this.dropZone.classList.remove('drag-over');
-        const files = e.dataTransfer.files;
-        this.handleFiles(files);
-    }
-
-    toggleFullscreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen();
-        } else {
-            document.exitFullscreen();
-        }
-    }
-
-    /**
-     * Toggle ROI selection mode
-     */
-    toggleRoiMode() {
-        if (!this.ctViewer) return;
-
-        const roiBtn = document.getElementById('roiBtn');
-        const isActive = this.ctViewer.toggleRoiMode();
-
-        if (isActive) {
-            roiBtn.classList.add('active');
-            roiBtn.title = 'ROI mode active - draw rectangle to set range';
-        } else {
-            roiBtn.classList.remove('active');
-            roiBtn.title = 'Set range from region';
-        }
-    }
-
-    /**
-     * Toggle crosshair visibility
-     */
-    toggleCrosshairs() {
-        if (!this.ctViewer) return;
-
-        const crosshairBtn = document.getElementById('crosshairBtn');
-        const isEnabled = this.ctViewer.toggleCrosshairs();
-
-        if (isEnabled) {
-            crosshairBtn.classList.add('active');
-            crosshairBtn.title = 'Crosshairs visible - click to hide';
-            this.pixelInfoGroup.style.display = 'block';
-            this.ctViewer.notifyCrosshairChange();
-        } else {
-            crosshairBtn.classList.remove('active');
-            crosshairBtn.title = 'Crosshairs hidden - click to show';
-            this.pixelInfoGroup.style.display = 'none';
-        }
-    }
-
-    // ===== Volume Loading Methods =====
 
     initCTComponents() {
         // Initialize CT viewer
@@ -346,84 +148,6 @@ class ImageViewer {
             }
         };
 
-        // 3D quality selector
-        const quality3DSelect = document.getElementById('quality3DSelect');
-        if (quality3DSelect) {
-            if (this.ctViewer && this.ctViewer.renderer3D) {
-                this.ctViewer.renderer3D.setQuality(quality3DSelect.value);
-            }
-            quality3DSelect.addEventListener('change', (e) => {
-                if (this.ctViewer && this.ctViewer.renderer3D) {
-                    this.ctViewer.renderer3D.setQuality(e.target.value);
-                }
-            });
-        }
-
-        // 3D gamma slider
-        const gamma3DSlider = document.getElementById('gamma3DSlider');
-        const gamma3DValue = document.getElementById('gamma3DValue');
-        if (gamma3DSlider) {
-            gamma3DSlider.addEventListener('input', (e) => {
-                const gamma = parseFloat(e.target.value);
-                if (gamma3DValue) {
-                    gamma3DValue.textContent = gamma.toFixed(1);
-                }
-                if (this.ctViewer && this.ctViewer.renderer3D) {
-                    this.ctViewer.renderer3D.setGamma(gamma);
-                }
-            });
-        }
-
-        // 3D resolution selector
-        if (this.resolution3DSelect) {
-            this.resolution3DSelect.addEventListener('change', async (e) => {
-                const value = e.target.value;
-                await this.set3DResolution(value);
-            });
-        }
-
-        // Listen for slice change events from CT viewer
-        document.addEventListener('slicechange', (e) => {
-            const { axis, sliceIndex, totalSlices } = e.detail;
-            const indicator = axis === 'xy' ? this.sliceIndicatorXY :
-                            axis === 'xz' ? this.sliceIndicatorXZ :
-                            this.sliceIndicatorYZ;
-
-            if (indicator) {
-                const axisLabel = axis.toUpperCase();
-                indicator.textContent = `${axisLabel}: ${sliceIndex + 1}/${totalSlices}`;
-            }
-        });
-
-        // Listen for zoom change events
-        document.addEventListener('zoomchange', (e) => {
-            this.zoomLevel.textContent = `${Math.round(e.detail.zoom * 100)}%`;
-        });
-
-        // Listen for range change events (e.g., from ROI selection) to sync histogram
-        document.addEventListener('rangechange', (e) => {
-            const { min, max } = e.detail;
-            if (this.histogram) {
-                this.histogram.setRange(min, max);
-            }
-        });
-
-        // Listen for crosshair position change events
-        document.addEventListener('crosshairchange', (e) => {
-            const { x, y, z, value } = e.detail;
-            if (this.pixelInfo) {
-                this.pixelInfo.textContent = `X: ${x}, Y: ${y}, Z: ${z} = ${value}`;
-            }
-        });
-    }
-
-    applyFormatConfig() {
-        if (!this.fileInput) return;
-        if (typeof ViewerConfig === 'undefined') return;
-        const accept = ViewerConfig.accept;
-        if (accept) {
-            this.fileInput.accept = accept;
-        }
     }
 
     createVolumeState() {
@@ -443,30 +167,6 @@ class ImageViewer {
 
     updateVolumeState(patch) {
         this.volumeState = { ...this.volumeState, ...patch };
-    }
-
-    updateVolumeUI({ name, dimensions, label, loading = false }) {
-        if (!dimensions || dimensions.length !== 3) return;
-
-        const [nx, ny, nz] = dimensions;
-        const displayName = loading ? `${name} (loading...)` : name;
-
-        if (this.fileName) {
-            this.fileName.textContent = displayName || 'No file loaded';
-        }
-        if (this.imageInfo) {
-            this.imageInfo.textContent = `${nx}x${ny}x${nz} | ${label}`;
-        }
-
-        if (this.sliceIndicatorXY) {
-            this.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz / 2) + 1}/${nz}`;
-        }
-        if (this.sliceIndicatorXZ) {
-            this.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny / 2) + 1}/${ny}`;
-        }
-        if (this.sliceIndicatorYZ) {
-            this.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx / 2) + 1}/${nx}`;
-        }
     }
 
     reset3DResolutionCache() {
@@ -499,17 +199,29 @@ class ImageViewer {
         const MAX_3D_MB = WebGLUtils.getVolumeStreamingThresholdBytes() / (1024 * 1024);
 
         const canUseDims = (dims) => {
-            if (!dims) return { enabled: false, reason: 'Not available', reasonType: 'unavailable' };
-            if (!gl || !dataType) return { enabled: true };
+            if (!dims) {
+                return { enabled: false, reason: 'Not available', reasonType: 'unavailable' };
+            }
+            if (!gl || !dataType) {
+                return { enabled: true };
+            }
             const memCheck = WebGLUtils.checkGPUMemory(gl, dims, dataType);
             const memMB = memCheck && memCheck.memoryInfo
                 ? parseFloat(memCheck.memoryInfo.gpuMegabytes)
                 : 0;
             if (!memCheck.canLoad) {
-                return { enabled: false, reason: memCheck.recommendation || 'Exceeds GPU limits', reasonType: 'memory' };
+                return {
+                    enabled: false,
+                    reason: memCheck.recommendation || 'Exceeds GPU limits',
+                    reasonType: 'memory'
+                };
             }
             if (memMB && memMB > MAX_3D_MB) {
-                return { enabled: false, reason: `~${memMB.toFixed(0)}MB exceeds ${MAX_3D_MB}MB limit`, reasonType: 'memory' };
+                return {
+                    enabled: false,
+                    reason: `~${memMB.toFixed(0)}MB exceeds ${MAX_3D_MB}MB limit`,
+                    reasonType: 'memory'
+                };
             }
             return { enabled: true, warning: memCheck.recommendation };
         };
@@ -519,8 +231,12 @@ class ImageViewer {
             const option = select.querySelector(`option[value="${value}"]`);
             if (!option) return;
             let text = label;
-            if (!state.enabled && value === 'full' && state.reasonType === 'memory') {
-                text = 'Full (Memory limited)';
+            if (!state.enabled && state.reasonType === 'memory') {
+                if (value === 'full') {
+                    text = 'Full (Memory limited)';
+                } else if (value === 'mid') {
+                    text = 'Mid (Memory limited)';
+                }
             }
             option.textContent = text;
             option.disabled = !state.enabled;
@@ -528,8 +244,17 @@ class ImageViewer {
         };
 
         const lowState = canUseDims(lowDims);
-        const midState = midAvailable ? canUseDims(midDims) : { enabled: false, reason: 'Not available' };
-        const fullState = fullAvailable ? canUseDims(fullDims) : { enabled: false, reason: 'Not available' };
+        const midState = midAvailable
+            ? canUseDims(midDims)
+            : { enabled: false, reason: 'Not available', reasonType: 'unavailable' };
+        const fullEval = canUseDims(fullDims || baseDims);
+        const fullState = fullAvailable
+            ? fullEval
+            : { ...fullEval, enabled: false, reason: 'Not available', reasonType: 'unavailable' };
+        if (state.isStreaming) {
+            fullState.reasonType = 'memory';
+            fullState.reason = 'Memory limited';
+        }
 
         const lowLabelDims = lowVolume ? lowDims : null;
         applyOption('low', lowLabelDims ? `Low (${formatDims(lowLabelDims)})` : 'Low', lowState);
@@ -620,386 +345,11 @@ class ImageViewer {
         }
     }
 
-    async loadCTVolume(fileGroup) {
-        try {
-            this.reset3DResolutionCache();
-            this.resetVolumeState();
-
-            // Show loading indicator
-            this.showLoadingIndicator('Loading 3D volume...');
-
-            // Use progressive loading for large files
-            const PROGRESSIVE_THRESHOLD = (typeof ViewerConfig !== 'undefined' &&
-                ViewerConfig.limits &&
-                Number.isFinite(ViewerConfig.limits.progressiveThresholdBytes))
-                ? ViewerConfig.limits.progressiveThresholdBytes
-                : 50 * 1024 * 1024;
-            const useProgressive = fileGroup.rawFile.size > PROGRESSIVE_THRESHOLD;
-
-            if (useProgressive) {
-                await this.loadCTVolumeProgressive(fileGroup);
-            } else {
-                await this.loadCTVolumeDirect(fileGroup);
-            }
-
-        } catch (error) {
-            this.hideLoadingIndicator();
-            throw error;
-        }
-    }
-
-    /**
-     * Load volume directly (for smaller files)
-     */
-    async loadCTVolumeDirect(fileGroup) {
-        const volumeData = await this.fileParser.load3DVolume(
-            fileGroup.rawFile,
-            fileGroup.jsonFile,
-            (progress) => {
-                this.updateLoadingProgress(progress);
-            },
-            fileGroup.volumeinfoFile,
-            fileGroup.datFile
-        );
-
-        // Switch to CT mode
-        this.switchToCTMode();
-
-        // Load volume into CT viewer
-        const info = this.ctViewer.loadVolume(volumeData);
-
-        this.updateVolumeState({
-            name: fileGroup.name,
-            dimensions: info.dimensions,
-            dataType: info.dataType,
-            isStreaming: false,
-            hasFullData: true,
-            lowResVolume: null
-        });
-        this.update3DResolutionOptions('full');
-
-        // Initialize histogram with volume data
-        if (this.histogram) {
-            this.histogram.setVolume(volumeData);
-        }
-
-        // Update UI
-        this.updateVolumeUI({
-            name: fileGroup.name,
-            dimensions: info.dimensions,
-            label: info.dataType
-        });
-
-        // Hide loading indicator
-        this.hideLoadingIndicator();
-    }
-
-    /**
-     * Load volume progressively with Z-axis tiling (for larger files)
-     */
-    async loadCTVolumeProgressive(fileGroup) {
-        console.log('Using progressive loading for large volume');
-
-        // Switch to CT mode early so views are ready
-        this.switchToCTMode();
-
-        // Reference to store progressive data when it's created
-        let progressiveData = null;
-
-        // Create callbacks
-        const callbacks = {
-            onProgress: (progress) => {
-                this.updateLoadingProgress(progress);
-            },
-            onLowResReady: (lowResVolume, progData) => {
-                // Store reference to progressive data
-                progressiveData = progData;
-                this.ctViewer.progressiveVolume = progData;
-                this.ctViewer.volumeData = progData;
-
-                // Set up callbacks for streaming mode to re-render when slices load
-                if (progData.isStreaming) {
-                    // XY slice ready callback
-                    progData.onSliceReady = (z) => {
-                        // Only re-render if this is the current slice (exact match)
-                        const currentZ = this.ctViewer.state.slices.xy;
-                        if (z === currentZ) {
-                            this.ctViewer.renderView('xy', z);
-                            if (this.ctViewer.crosshairEnabled) {
-                                this.ctViewer.drawCrosshairs();
-                            }
-                        }
-                    };
-
-                    // XZ slice ready callback
-                    progData.onXZSliceReady = (y) => {
-                        const currentY = this.ctViewer.state.slices.xz;
-                        if (y === currentY) {
-                            this.ctViewer.renderView('xz', y);
-                            if (this.ctViewer.crosshairEnabled) {
-                                this.ctViewer.drawCrosshairs();
-                            }
-                        }
-                    };
-
-                    // YZ slice ready callback
-                    progData.onYZSliceReady = (x) => {
-                        const currentX = this.ctViewer.state.slices.yz;
-                        if (x === currentX) {
-                            this.ctViewer.renderView('yz', x);
-                            if (this.ctViewer.crosshairEnabled) {
-                                this.ctViewer.drawCrosshairs();
-                            }
-                        }
-                    };
-                }
-
-                // Update state and UI immediately with low-res preview
-                this.updateVolumeState({
-                    name: fileGroup.name,
-                    dimensions: progData.dimensions,
-                    dataType: progData.dataType,
-                    isStreaming: !!progData.isStreaming,
-                    hasFullData: false,
-                    lowResVolume: lowResVolume
-                });
-                this.updateVolumeUI({
-                    name: fileGroup.name,
-                    dimensions: progData.dimensions,
-                    label: 'Progressive',
-                    loading: true
-                });
-
-                // Initialize histogram with progressive data
-                if (this.histogram) {
-                    this.histogram.setVolume(progData);
-                }
-
-                this.update3DResolutionOptions('low');
-
-                // Hide loading indicator - user can interact now
-                this.hideLoadingIndicator();
-
-                // Call CTViewer's handler
-                this.ctViewer.handleLowResReady(lowResVolume);
-            },
-            onBlockReady: (blockIndex, zStart, zEnd) => {
-                // Call CTViewer's handler
-                this.ctViewer.handleBlockReady(blockIndex, zStart, zEnd);
-            },
-            onFullDataReady: (newVolumeData) => {
-                // Hybrid mode: full data loaded, swap from streaming to in-memory
-                progressiveData = newVolumeData;
-                this.ctViewer.progressiveVolume = newVolumeData;
-                this.ctViewer.volumeData = newVolumeData;
-                this.updateVolumeState({
-                    hasFullData: true,
-                    isStreaming: false
-                });
-
-                // Re-render views with high-res data in a staggered way to avoid UI stalls
-                const schedule = (cb) => {
-                    if (typeof requestAnimationFrame === 'function') {
-                        requestAnimationFrame(cb);
-                    } else {
-                        setTimeout(cb, 0);
-                    }
-                };
-
-                this.ctViewer.renderView('xy');
-
-                if (!this.ctViewer.singleViewMode) {
-                    schedule(() => {
-                        this.ctViewer.renderView('xz');
-                        schedule(() => {
-                            this.ctViewer.renderView('yz');
-                            if (this.ctViewer.crosshairEnabled) {
-                                this.ctViewer.drawCrosshairs();
-                            }
-                        });
-                    });
-                } else if (this.ctViewer.crosshairEnabled) {
-                    this.ctViewer.drawCrosshairs();
-                }
-
-                // Skip histogram update — low-res histogram is already adequate
-                // and recomputing from ~695M voxels freezes the UI for seconds
-
-                console.log('Hybrid mode: Swapped to in-memory volume data');
-            },
-            onAllBlocksReady: () => {
-                // Update UI to show loading complete
-                this.updateVolumeState({
-                    name: fileGroup.name,
-                    dimensions: progressiveData.dimensions,
-                    dataType: progressiveData.dataType,
-                    hasFullData: !this.volumeState.isStreaming
-                });
-                this.updateVolumeUI({
-                    name: fileGroup.name,
-                    dimensions: progressiveData.dimensions,
-                    label: progressiveData.dataType
-                });
-
-                // Call CTViewer's handler
-                this.ctViewer.handleAllBlocksReady();
-
-                this.update3DResolutionOptions();
-
-                console.log('Progressive loading complete');
-            }
-        };
-
-        // Start progressive loading
-        await this.fileParser.load3DVolumeProgressive(
-            fileGroup.rawFile,
-            fileGroup.jsonFile,
-            callbacks,
-            fileGroup.volumeinfoFile,
-            fileGroup.datFile
-        );
-    }
-
-    async loadDICOMSeries(seriesGroup) {
-        try {
-            this.reset3DResolutionCache();
-            this.resetVolumeState();
-            this.showLoadingIndicator('Loading DICOM series...');
-
-            const volumeData = await this.fileParser.loadDICOMSeries(
-                seriesGroup,
-                (progress) => {
-                    this.updateLoadingProgress(progress);
-                }
-            );
-
-            // Switch to CT mode
-            this.switchToCTMode();
-
-            // Load volume into CT viewer
-            const info = this.ctViewer.loadVolume(volumeData);
-            this.updateVolumeState({
-                name: seriesGroup.name || 'DICOM Series',
-                dimensions: info.dimensions,
-                dataType: info.dataType,
-                isStreaming: false,
-                hasFullData: true,
-                lowResVolume: null
-            });
-            this.update3DResolutionOptions('full');
-
-            // Initialize histogram with volume data
-            if (this.histogram) {
-                this.histogram.setVolume(volumeData);
-            }
-
-            // Update UI
-            this.updateVolumeUI({
-                name: seriesGroup.name || 'DICOM Series',
-                dimensions: info.dimensions,
-                label: `DICOM ${info.dataType}`
-            });
-
-            this.hideLoadingIndicator();
-        } catch (error) {
-            this.hideLoadingIndicator();
-            throw error;
-        }
-    }
-
-    async loadNifti(fileGroup) {
-        try {
-            this.reset3DResolutionCache();
-            this.resetVolumeState();
-            this.showLoadingIndicator('Loading NIfTI...');
-
-            const volumeData = await this.fileParser.loadNifti(fileGroup.file);
-
-            // Switch to CT mode
-            this.switchToCTMode();
-
-            // Load volume into CT viewer
-            const info = this.ctViewer.loadVolume(volumeData);
-            this.updateVolumeState({
-                name: fileGroup.name || 'NIfTI',
-                dimensions: info.dimensions,
-                dataType: info.dataType,
-                isStreaming: false,
-                hasFullData: true,
-                lowResVolume: null
-            });
-            this.update3DResolutionOptions('full');
-
-            // Initialize histogram with volume data
-            if (this.histogram) {
-                this.histogram.setVolume(volumeData);
-            }
-
-            // Update UI
-            this.updateVolumeUI({
-                name: fileGroup.name || 'NIfTI',
-                dimensions: info.dimensions,
-                label: `NIfTI ${info.dataType}`
-            });
-
-            this.hideLoadingIndicator();
-        } catch (error) {
-            this.hideLoadingIndicator();
-            throw error;
-        }
-    }
-
-    async loadTIFF(fileGroup) {
-        try {
-            this.reset3DResolutionCache();
-            this.resetVolumeState();
-            this.showLoadingIndicator('Loading TIFF...');
-
-            const tiffData = await this.fileParser.loadTIFF(fileGroup.file);
-
-            // Convert TIFF to VolumeData (treats 2D as depth=1 volume)
-            const volumeData = this.fileParser.convertTiffToVolume(tiffData);
-
-            // Switch to CT mode and display
-            this.switchToCTMode();
-
-            // Load volume into CT viewer
-            const info = this.ctViewer.loadVolume(volumeData);
-            this.updateVolumeState({
-                name: fileGroup.name,
-                dimensions: info.dimensions,
-                dataType: info.dataType,
-                isStreaming: false,
-                hasFullData: true,
-                lowResVolume: null
-            });
-            this.update3DResolutionOptions('full');
-
-            // Initialize histogram with volume data
-            if (this.histogram) {
-                this.histogram.setVolume(volumeData);
-            }
-
-            // Update UI
-            this.updateVolumeUI({
-                name: fileGroup.name,
-                dimensions: info.dimensions,
-                label: info.dataType
-            });
-
-            this.hideLoadingIndicator();
-
-        } catch (error) {
-            this.hideLoadingIndicator();
-            throw error;
-        }
-    }
-
     async load2DImage(fileGroup) {
         try {
             this.reset3DResolutionCache();
             this.resetVolumeState();
-            this.showLoadingIndicator('Loading image...');
+            this.status.showLoadingIndicator('Loading image...');
 
             const file = fileGroup.file;
             const volumeData = await this.convertImageToVolume(file);
@@ -1025,16 +375,16 @@ class ImageViewer {
             }
 
             // Update UI
-            this.updateVolumeUI({
+            this.status.updateVolumeUI({
                 name: file.name,
                 dimensions: info.dimensions,
                 label: info.dataType
             });
 
-            this.hideLoadingIndicator();
+            this.status.hideLoadingIndicator();
 
         } catch (error) {
-            this.hideLoadingIndicator();
+            this.status.hideLoadingIndicator();
             throw error;
         }
     }
@@ -1136,44 +486,6 @@ class ImageViewer {
         } else {
             crosshairBtn.classList.remove('active');
             this.pixelInfoGroup.style.display = 'none';
-        }
-    }
-
-    showLoadingIndicator(message) {
-        let overlay = document.querySelector('.loading-overlay');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.className = 'loading-overlay';
-            overlay.innerHTML = `
-                <div class="loading-spinner"></div>
-                <div class="loading-text">${message}</div>
-                <div class="loading-progress"></div>
-            `;
-            this.dropZone.appendChild(overlay);
-        }
-    }
-
-    hideLoadingIndicator() {
-        const overlay = document.querySelector('.loading-overlay');
-        if (overlay) {
-            overlay.remove();
-        }
-    }
-
-    updateLoadingProgress(progress) {
-        const progressEl = document.querySelector('.loading-progress');
-        if (progressEl) {
-            if (progress.stage === 'metadata') {
-                progressEl.textContent = 'Loading metadata...';
-            } else if (progress.stage === 'loading') {
-                progressEl.textContent = 'Loading volume data...';
-            } else if (progress.stage === 'streaming') {
-                progressEl.textContent = 'Streaming mode: Creating preview...';
-            } else if (progress.stage === 'parsing' || progress.stage === 'processing') {
-                progressEl.textContent = 'Processing volume data...';
-            } else if (progress.stage === 'complete') {
-                progressEl.textContent = 'Complete!';
-            }
         }
     }
 
