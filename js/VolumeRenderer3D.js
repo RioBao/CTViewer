@@ -488,8 +488,6 @@ class VolumeRenderer3D {
             // Clamp elevation to avoid gimbal lock
             this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
 
-            // Normalize azimuth
-            this.camera.azimuth = this.camera.azimuth % 360;
             this.canvas.style.cursor = 'grabbing';
         }
 
@@ -591,7 +589,6 @@ class VolumeRenderer3D {
         this.camera.azimuth += dx * 0.5;
         this.camera.elevation += dy * 0.5;
         this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
-        this.camera.azimuth = this.camera.azimuth % 360;
 
         this.lastMouse = { x: touch.clientX, y: touch.clientY };
         this.render();
