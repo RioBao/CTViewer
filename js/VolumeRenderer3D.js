@@ -638,10 +638,6 @@ class VolumeRenderer3D {
         this.camera.elevation += crossX * degPerUnit;
         this.camera.roll += crossY * degPerUnit;
         this.camera.azimuth += crossZ * degPerUnit;
-
-        this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
-        this.camera.azimuth = ((this.camera.azimuth % 360) + 360) % 360;
-        this.camera.roll = ((this.camera.roll % 360) + 360) % 360;
     }
 
     // ===== Progressive Rendering =====
