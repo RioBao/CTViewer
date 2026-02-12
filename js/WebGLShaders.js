@@ -49,6 +49,7 @@ uniform vec3 uDimensions;
 uniform float uDisplayMin;   // Window low (normalized)
 uniform float uDisplayMax;   // Window high (normalized)
 uniform float uGamma;        // Gamma correction
+uniform float uEnableLowResAA; // 1.0 = enable lightweight 8-tap smoothing
 
 // Ray marching parameters
 uniform float uStepSize;     // Step size in normalized coordinates
@@ -56,6 +57,20 @@ uniform int uNumSteps;       // Maximum number of steps
 
 in vec2 vUV;
 out vec4 fragColor;
+
+float sampleVolume8Tap(vec3 texCoord, vec3 texelSize) {
+    vec3 o = texelSize * 0.5;
+    float sum = 0.0;
+    sum += texture(uVolume, texCoord + vec3(-o.x, -o.y, -o.z)).r;
+    sum += texture(uVolume, texCoord + vec3(-o.x, -o.y,  o.z)).r;
+    sum += texture(uVolume, texCoord + vec3(-o.x,  o.y, -o.z)).r;
+    sum += texture(uVolume, texCoord + vec3(-o.x,  o.y,  o.z)).r;
+    sum += texture(uVolume, texCoord + vec3( o.x, -o.y, -o.z)).r;
+    sum += texture(uVolume, texCoord + vec3( o.x, -o.y,  o.z)).r;
+    sum += texture(uVolume, texCoord + vec3( o.x,  o.y, -o.z)).r;
+    sum += texture(uVolume, texCoord + vec3( o.x,  o.y,  o.z)).r;
+    return sum * 0.125;
+}
 
 void main() {
     // Calculate rotation matrices from camera angles
@@ -118,6 +133,7 @@ void main() {
     // Volume bounds in aspect-corrected space: [-volSize/2, +volSize/2]
     vec3 volMin = -volSize * 0.5;
     vec3 volMax = volSize * 0.5;
+    vec3 texelSize = 1.0 / max(uDimensions, vec3(1.0));
 
     // Display range for windowing
     float displayRange = uDisplayMax - uDisplayMin;
@@ -131,7 +147,12 @@ void main() {
         if (all(greaterThanEqual(pos, volMin)) && all(lessThan(pos, volMax))) {
             // Convert to texture coordinates [0, 1]
             vec3 texCoord = (pos - volMin) / volSize;
-            float value = texture(uVolume, texCoord).r;
+            float value;
+            if (uEnableLowResAA > 0.5) {
+                value = sampleVolume8Tap(texCoord, texelSize);
+            } else {
+                value = texture(uVolume, texCoord).r;
+            }
 
             // Apply windowing
             float normalized;

@@ -44,7 +44,8 @@ class ViewerStatus {
         document.addEventListener('crosshairchange', (e) => {
             const { x, y, z, value } = e.detail;
             if (viewer.pixelInfo) {
-                viewer.pixelInfo.textContent = `X: ${x}, Y: ${y}, Z: ${z} = ${value}`;
+                const gray = Number.isFinite(value) ? Math.round(value) : value;
+                viewer.pixelInfo.textContent = `X:${x},Y:${y},Z:${z}=${gray}`;
             }
         });
     }

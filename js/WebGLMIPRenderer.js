@@ -20,6 +20,7 @@ class WebGLMIPRenderer {
         // Ray marching parameters
         this.stepSize = 0.005;
         this.numSteps = 256;
+        this.enableLowResAA = false;
 
         // Shader program and uniforms
         this.program = null;
@@ -61,6 +62,7 @@ class WebGLMIPRenderer {
             'uDisplayMin',
             'uDisplayMax',
             'uGamma',
+            'uEnableLowResAA',
             'uStepSize',
             'uNumSteps'
         ]);
@@ -157,6 +159,7 @@ class WebGLMIPRenderer {
             // Store dimensions and mark as loaded
             this.volumeDimensions = [nx, ny, nz];
             this.volumeLoaded = true;
+            this.enableLowResAA = !!(volumeData.isLowRes || volumeData.isEnhanced);
 
             // Reset display range to full for uint8 (already normalized in shader)
             // For normalized data, displayMin/Max are in [0,1]
@@ -295,6 +298,7 @@ class WebGLMIPRenderer {
             gl.uniform1f(this.uniforms.uDisplayMin, this.displayMin);
             gl.uniform1f(this.uniforms.uDisplayMax, this.displayMax);
             gl.uniform1f(this.uniforms.uGamma, this.gamma);
+            gl.uniform1f(this.uniforms.uEnableLowResAA, this.enableLowResAA ? 1.0 : 0.0);
 
             // Set ray marching parameters
             gl.uniform1f(this.uniforms.uStepSize, this.stepSize);

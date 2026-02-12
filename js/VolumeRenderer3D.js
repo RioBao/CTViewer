@@ -69,6 +69,7 @@ class VolumeRenderer3D {
         this.isTracking = false;       // Left button = track (rotate in 3D)
         this.isPanning = false;        // Both buttons = pan (translate/reposition)
         this.lastMouse = { x: 0, y: 0 };
+        this.lastTrackballVec = null;
         this.buttonsDown = { left: false, right: false };
 
         // Pan offset (screen-space translation)
@@ -461,6 +462,7 @@ class VolumeRenderer3D {
         if (e.button === 2) this.buttonsDown.right = true;
 
         this.lastMouse = { x: e.clientX, y: e.clientY };
+        this.lastTrackballVec = this.getTrackballVector(e.clientX, e.clientY);
         this.updateInteractionState();
     }
 
@@ -479,15 +481,14 @@ class VolumeRenderer3D {
             // Both buttons: pan (translate/reposition volume)
             this.pan.x += dx;
             this.pan.y += dy;
+            this.lastTrackballVec = this.getTrackballVector(e.clientX, e.clientY);
             this.canvas.style.cursor = 'move';
         } else if (leftDown) {
-            // Left button: track (rotate in 3D)
-            this.camera.azimuth += dx * 0.5;
-            this.camera.elevation += dy * 0.5;
-
-            // Clamp elevation to avoid gimbal lock
-            this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
-
+            // Left button: virtual trackball rotation (depends on click position)
+            const prevVec = this.lastTrackballVec || this.getTrackballVector(this.lastMouse.x, this.lastMouse.y);
+            const currVec = this.getTrackballVector(e.clientX, e.clientY);
+            this.applyTrackballDelta(prevVec, currVec);
+            this.lastTrackballVec = currVec;
             this.canvas.style.cursor = 'grabbing';
         }
 
@@ -501,6 +502,7 @@ class VolumeRenderer3D {
         // Record which button was released
         if (e.button === 0) this.buttonsDown.left = false;
         if (e.button === 2) this.buttonsDown.right = false;
+        if (!this.buttonsDown.left) this.lastTrackballVec = null;
 
         this.updateInteractionState();
     }
@@ -511,6 +513,7 @@ class VolumeRenderer3D {
         this.buttonsDown.right = false;
         this.isTracking = false;
         this.isPanning = false;
+        this.lastTrackballVec = null;
         this.canvas.style.cursor = 'grab';
         this.endInteraction();
     }
@@ -573,6 +576,7 @@ class VolumeRenderer3D {
         const touch = e.touches[0];
         this.isTracking = true;  // Single touch = track (rotate)
         this.lastMouse = { x: touch.clientX, y: touch.clientY };
+        this.lastTrackballVec = this.getTrackballVector(touch.clientX, touch.clientY);
         this.startInteraction();
     }
 
@@ -581,14 +585,10 @@ class VolumeRenderer3D {
 
         e.preventDefault();
         const touch = e.touches[0];
-
-        const dx = touch.clientX - this.lastMouse.x;
-        const dy = touch.clientY - this.lastMouse.y;
-
-        // Track: rotate in 3D
-        this.camera.azimuth += dx * 0.5;
-        this.camera.elevation += dy * 0.5;
-        this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
+        const prevVec = this.lastTrackballVec || this.getTrackballVector(this.lastMouse.x, this.lastMouse.y);
+        const currVec = this.getTrackballVector(touch.clientX, touch.clientY);
+        this.applyTrackballDelta(prevVec, currVec);
+        this.lastTrackballVec = currVec;
 
         this.lastMouse = { x: touch.clientX, y: touch.clientY };
         this.render();
@@ -598,7 +598,50 @@ class VolumeRenderer3D {
         if (!this.isTracking) return;
 
         this.isTracking = false;
+        this.lastTrackballVec = null;
         this.endInteraction();
+    }
+
+    getTrackballVector(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const width = Math.max(rect.width, 1);
+        const height = Math.max(rect.height, 1);
+
+        // Map to [-1, 1], with +Y up for right-handed math.
+        const x = ((clientX - rect.left) / width) * 2 - 1;
+        const y = 1 - ((clientY - rect.top) / height) * 2;
+
+        const r2 = x * x + y * y;
+        const z = r2 <= 1 ? Math.sqrt(1 - r2) : 0;
+
+        if (r2 > 1) {
+            const invLen = 1 / Math.sqrt(r2);
+            return { x: x * invLen, y: y * invLen, z };
+        }
+
+        return { x, y, z };
+    }
+
+    applyTrackballDelta(prev, curr) {
+        const crossX = prev.y * curr.z - prev.z * curr.y;
+        const crossY = prev.z * curr.x - prev.x * curr.z;
+        const crossZ = prev.x * curr.y - prev.y * curr.x;
+        const crossMag = Math.hypot(crossX, crossY, crossZ);
+        if (crossMag < 1e-6) return;
+
+        const dotRaw = prev.x * curr.x + prev.y * curr.y + prev.z * curr.z;
+        const dot = Math.max(-1, Math.min(1, dotRaw));
+        const angle = Math.atan2(crossMag, dot);
+        const degPerUnit = (angle * 180 / Math.PI) / crossMag;
+
+        // Map trackball axis components to camera angles.
+        this.camera.elevation += crossX * degPerUnit;
+        this.camera.roll += crossY * degPerUnit;
+        this.camera.azimuth += crossZ * degPerUnit;
+
+        this.camera.elevation = Math.max(-89, Math.min(89, this.camera.elevation));
+        this.camera.azimuth = ((this.camera.azimuth % 360) + 360) % 360;
+        this.camera.roll = ((this.camera.roll % 360) + 360) % 360;
     }
 
     // ===== Progressive Rendering =====

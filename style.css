@@ -205,6 +205,37 @@ button.active:hover {
     border-radius: 3px;
 }
 
+#sliceControls .slice-indicators {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.2rem;
+}
+
+#sliceControls .slice-indicator {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 0.72rem;
+    line-height: 1.1;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.2rem 0.35rem;
+}
+
+#pixelInfo {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 0.72rem;
+    line-height: 1.1;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.2rem 0.35rem;
+}
+
 .control-row {
     display: flex;
     flex-direction: column;
