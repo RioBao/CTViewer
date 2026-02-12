@@ -172,7 +172,6 @@ class ViewerControls {
         if (direction === 'down') camera.elevation += step;
 
         camera.elevation = Math.max(-89, Math.min(89, camera.elevation));
-        camera.roll = camera.roll % 360;
 
         viewer.ctViewer.renderer3D.setCamera(camera);
         return true;
