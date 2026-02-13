@@ -106,22 +106,28 @@ class FileParser {
                 fileMap.get(basename).raw = file;
                 processedFiles.add(file);
             } else if (ext === 'json') {
-                const basename = file.name.replace(/\.json$/i, '');
+                const basename = file.name
+                    .replace(/\.raw\.json$/i, '')
+                    .replace(/\.json$/i, '');
                 if (!fileMap.has(basename)) {
                     fileMap.set(basename, {});
                 }
                 fileMap.get(basename).json = file;
                 processedFiles.add(file);
             } else if (ext === 'volumeinfo') {
-                // volumeinfo files are named like "name.raw.volumeinfo"
-                const basename = file.name.replace(/\.raw\.volumeinfo$/i, '');
+                // volumeinfo files are usually "name.raw.volumeinfo" but also support "name.volumeinfo"
+                const basename = file.name
+                    .replace(/\.raw\.volumeinfo$/i, '')
+                    .replace(/\.volumeinfo$/i, '');
                 if (!fileMap.has(basename)) {
                     fileMap.set(basename, {});
                 }
                 fileMap.get(basename).volumeinfo = file;
                 processedFiles.add(file);
             } else if (ext === 'dat') {
-                const basename = file.name.replace(/\.dat$/i, '');
+                const basename = file.name
+                    .replace(/\.raw\.dat$/i, '')
+                    .replace(/\.dat$/i, '');
                 if (!fileMap.has(basename)) {
                     fileMap.set(basename, {});
                 }
@@ -131,6 +137,9 @@ class FileParser {
         });
 
         // Create groups for RAW+metadata pairs (JSON takes priority over volumeinfo, then DAT)
+        const unmatchedRaw = [];
+        const unmatchedMetadata = [];
+
         fileMap.forEach((fileGroup, basename) => {
             if (fileGroup.raw && (fileGroup.json || fileGroup.volumeinfo || fileGroup.dat)) {
                 groups.push({
@@ -141,16 +150,46 @@ class FileParser {
                     datFile: fileGroup.dat || null,
                     name: basename
                 });
-            } else if (fileGroup.raw) {
-                console.warn(`RAW file ${basename}.raw found without matching metadata file`);
-            } else if (fileGroup.json) {
-                console.warn(`JSON file ${basename}.json found without matching RAW file`);
-            } else if (fileGroup.volumeinfo) {
-                console.warn(`Volumeinfo file ${basename}.raw.volumeinfo found without matching RAW file`);
-            } else if (fileGroup.dat) {
-                console.warn(`DAT file ${basename}.dat found without matching RAW file`);
+            } else {
+                if (fileGroup.raw) {
+                    unmatchedRaw.push({ basename, fileGroup });
+                }
+                if (fileGroup.json || fileGroup.volumeinfo || fileGroup.dat) {
+                    unmatchedMetadata.push({ basename, fileGroup });
+                }
             }
         });
+
+        // Robust fallback: if user selected exactly one RAW and one metadata file, pair them explicitly.
+        if (groups.length === 0 && unmatchedRaw.length === 1 && unmatchedMetadata.length === 1) {
+            const rawEntry = unmatchedRaw[0];
+            const metaEntry = unmatchedMetadata[0];
+            const fallbackName = rawEntry.basename || rawEntry.fileGroup.raw.name.replace(/\.raw$/i, '');
+            groups.push({
+                type: '3d-raw',
+                rawFile: rawEntry.fileGroup.raw,
+                jsonFile: metaEntry.fileGroup.json || null,
+                volumeinfoFile: metaEntry.fileGroup.volumeinfo || null,
+                datFile: metaEntry.fileGroup.dat || null,
+                name: fallbackName
+            });
+        } else {
+            // Keep diagnostics for truly unpaired selections.
+            unmatchedRaw.forEach(({ basename }) => {
+                console.warn(`RAW file ${basename}.raw found without matching metadata file`);
+            });
+            unmatchedMetadata.forEach(({ basename, fileGroup }) => {
+                if (fileGroup.json) {
+                    console.warn(`JSON file ${basename}.json found without matching RAW file`);
+                }
+                if (fileGroup.volumeinfo) {
+                    console.warn(`Volumeinfo file ${basename}.raw.volumeinfo found without matching RAW file`);
+                }
+                if (fileGroup.dat) {
+                    console.warn(`DAT file ${basename}.dat found without matching RAW file`);
+                }
+            });
+        }
 
         // Second pass: process remaining files
         const tiffFiles = [];

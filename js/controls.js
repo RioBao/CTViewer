@@ -14,7 +14,15 @@ class ViewerControls {
         const roiBtn = document.getElementById('roiBtn');
         const crosshairBtn = document.getElementById('crosshairBtn');
 
-        if (openBtn) openBtn.addEventListener('click', () => viewer.fileInput.click());
+        if (openBtn) {
+            openBtn.addEventListener('click', () => {
+                if (viewer.openFilesDialog) {
+                    viewer.openFilesDialog();
+                } else {
+                    viewer.fileInput.click();
+                }
+            });
+        }
         if (zoomInBtn) zoomInBtn.addEventListener('click', () => this.zoomIn());
         if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => this.zoomOut());
         if (resetBtn) resetBtn.addEventListener('click', () => this.resetView());
@@ -24,8 +32,12 @@ class ViewerControls {
 
         viewer.fileInput.addEventListener('change', (e) => {
             if (e.target.files && e.target.files.length > 0) {
+                if (viewer.clearSelectedFileHandles) {
+                    viewer.clearSelectedFileHandles();
+                }
                 viewer.handleFiles(e.target.files);
             }
+            e.target.value = '';
         });
 
         viewer.dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
@@ -114,7 +126,11 @@ class ViewerControls {
             case 'o':
                 if (!e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
-                    viewer.fileInput.click();
+                    if (viewer.openFilesDialog) {
+                        viewer.openFilesDialog();
+                    } else {
+                        viewer.fileInput.click();
+                    }
                 }
                 break;
             case 'ArrowLeft':
@@ -263,6 +279,9 @@ class ViewerControls {
         viewer.dropZone.classList.remove('drag-over');
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
+            if (viewer.clearSelectedFileHandles) {
+                viewer.clearSelectedFileHandles();
+            }
             viewer.handleFiles(files);
         }
     }

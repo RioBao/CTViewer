@@ -4,6 +4,8 @@ class ImageViewer {
         this.ctViewer = null;
         this.histogram = null;
         this.cachedMid3DVolume = null;
+        this.fileHandleMap = new Map();
+        this.pendingRawSelection = null;
         this.volumeState = this.createVolumeState();
         this.ui = this.createUIState();
 
@@ -23,6 +25,134 @@ class ImageViewer {
         this.controls.bind();
         this.bindOverlayUI();
         this.update3DStatusChip();
+    }
+
+    clearSelectedFileHandles() {
+        this.fileHandleMap.clear();
+    }
+
+    getFileSignature(file) {
+        if (!file) return '';
+        const name = file.name || '';
+        const size = Number.isFinite(file.size) ? file.size : 0;
+        const modified = Number.isFinite(file.lastModified) ? file.lastModified : 0;
+        return `${name}::${size}::${modified}`;
+    }
+
+    rememberSelectedFileHandles(files, handles) {
+        this.clearSelectedFileHandles();
+        if (!Array.isArray(files) || !Array.isArray(handles) || files.length !== handles.length) {
+            return;
+        }
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const handle = handles[i];
+            if (!file || !handle || handle.kind !== 'file') continue;
+            const key = this.getFileSignature(file);
+            if (key) {
+                this.fileHandleMap.set(key, handle);
+            }
+        }
+    }
+
+    getFileHandle(file) {
+        if (!file) return null;
+        const key = this.getFileSignature(file);
+        if (!key) return null;
+        return this.fileHandleMap.get(key) || null;
+    }
+
+    clearPendingRawSelection() {
+        this.pendingRawSelection = null;
+    }
+
+    rememberPendingRawSelection(rawFile) {
+        if (!rawFile) return;
+        this.pendingRawSelection = {
+            file: rawFile,
+            createdAt: Date.now()
+        };
+    }
+
+    hasPendingRawSelection() {
+        if (!this.pendingRawSelection || !this.pendingRawSelection.file) {
+            return false;
+        }
+        const ageMs = Date.now() - (this.pendingRawSelection.createdAt || 0);
+        if (ageMs > 10 * 60 * 1000) {
+            this.clearPendingRawSelection();
+            return false;
+        }
+        return true;
+    }
+
+    isRawFile(file) {
+        if (!file || !file.name) return false;
+        const ext = this.fileParser.getFileExtension(file.name).toLowerCase();
+        return ext === 'raw';
+    }
+
+    isRawMetadataFile(file) {
+        if (!file || !file.name) return false;
+        const ext = this.fileParser.getFileExtension(file.name).toLowerCase();
+        return ext === 'json' || ext === 'dat' || ext === 'volumeinfo';
+    }
+
+    hasAnyRawMetadata(files) {
+        return files.some((f) => this.isRawMetadataFile(f));
+    }
+
+    tryMergeWithPendingRawSelection(fileArray) {
+        if (!this.hasPendingRawSelection() || !Array.isArray(fileArray) || fileArray.length === 0) {
+            return fileArray;
+        }
+
+        const hasRaw = fileArray.some((f) => this.isRawFile(f));
+        if (hasRaw) {
+            // New RAW selection supersedes previous pending state.
+            this.clearPendingRawSelection();
+            return fileArray;
+        }
+
+        const metadataFiles = fileArray.filter((f) => this.isRawMetadataFile(f));
+        if (metadataFiles.length > 0) {
+            const merged = [this.pendingRawSelection.file, ...fileArray];
+            this.clearPendingRawSelection();
+            return merged;
+        }
+
+        return fileArray;
+    }
+
+    async openFilesDialog() {
+        if (typeof window.showOpenFilePicker === 'function') {
+            try {
+                const handles = await window.showOpenFilePicker({ multiple: true });
+                if (!handles || handles.length === 0) return;
+
+                const files = [];
+                for (const handle of handles) {
+                    if (handle && handle.kind === 'file') {
+                        files.push(await handle.getFile());
+                    }
+                }
+                if (files.length === 0) return;
+
+                this.rememberSelectedFileHandles(files, handles);
+                await this.handleFiles(files);
+                return;
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    return;
+                }
+                console.warn('showOpenFilePicker unavailable/failed, falling back to file input:', error);
+            }
+        }
+
+        this.clearSelectedFileHandles();
+        if (this.fileInput) {
+            this.fileInput.click();
+        }
     }
 
     initElements() {
@@ -832,7 +962,10 @@ class ImageViewer {
 
     async handleFiles(files) {
         try {
-            const fileArray = Array.from(files);
+            let fileArray = Array.from(files);
+            fileArray = this.tryMergeWithPendingRawSelection(fileArray);
+            fileArray = await this.tryResolveSingleRawSelection(fileArray);
+
             const hasRaw = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'raw');
             const hasJson = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'json');
             const hasVolumeinfo = fileArray.some(file => {
@@ -841,14 +974,21 @@ class ImageViewer {
             });
             const hasDat = fileArray.some(file => this.fileParser.getFileExtension(file.name).toLowerCase() === 'dat');
 
+            if (fileArray.length === 1 && hasRaw && !hasJson && !hasVolumeinfo && !hasDat) {
+                this.rememberPendingRawSelection(fileArray[0]);
+                return;
+            }
+
             // Group files by type (pairs .raw with .json, etc.)
-            const fileGroups = await this.fileParser.groupFilesAsync(files);
+            const fileGroups = await this.fileParser.groupFilesAsync(fileArray);
 
             if (fileGroups.length === 0) {
                 if (hasRaw && !hasJson && !hasVolumeinfo && !hasDat) {
-                    alert('RAW file selected without metadata. Please select the matching .json, .raw.volumeinfo, or .dat file at the same time.');
+                    alert('RAW file selected without metadata. Please select the matching .json, .raw.volumeinfo/.volumeinfo, or .dat file at the same time.');
                 } else if (hasRaw) {
-                    alert('RAW file selected without matching metadata. Ensure the .json, .raw.volumeinfo, or .dat has the same base name and select both files together.');
+                    alert('RAW file selected without matching metadata. Ensure the .json, .raw.volumeinfo/.volumeinfo, or .dat has the same base name and select both files together.');
+                } else if (this.hasPendingRawSelection() && this.hasAnyRawMetadata(fileArray)) {
+                    alert('Selected metadata could not be paired with the remembered RAW file. Please select RAW and metadata together once.');
                 } else {
                     alert('No valid files selected');
                 }
@@ -865,18 +1005,21 @@ class ImageViewer {
                     }, dicomGroups[0]);
                 }
                 await this.loaders.dicom.load(selected);
+                this.clearPendingRawSelection();
                 return;
             }
 
             const niftiGroup = fileGroups.find(g => g.type === 'nifti');
             if (niftiGroup) {
                 await this.loaders.nifti.load(niftiGroup);
+                this.clearPendingRawSelection();
                 return;
             }
 
             const tiffGroup = fileGroups.find(g => g.type === 'tiff');
             if (tiffGroup) {
                 await this.loaders.tiff.load(tiffGroup);
+                this.clearPendingRawSelection();
                 return;
             }
 
@@ -885,13 +1028,126 @@ class ImageViewer {
 
             if (firstGroup.type === '3d-raw') {
                 await this.loaders.raw.load(firstGroup);
+                this.clearPendingRawSelection();
             } else if (firstGroup.type === '2d-image') {
                 await this.load2DImage(firstGroup);
+                this.clearPendingRawSelection();
             }
         } catch (error) {
             console.error('Error loading files:', error);
             alert(`Error loading files: ${error.message}`);
         }
+    }
+
+    async tryResolveSingleRawSelection(fileArray) {
+        if (!Array.isArray(fileArray) || fileArray.length !== 1) {
+            return fileArray;
+        }
+
+        const rawFile = fileArray[0];
+        const ext = this.fileParser.getFileExtension(rawFile.name).toLowerCase();
+        if (ext !== 'raw') {
+            return fileArray;
+        }
+
+        const pickedMetadata = await this.promptForRawMetadataFile(rawFile);
+        if (pickedMetadata) {
+            this.clearPendingRawSelection();
+            return [rawFile, pickedMetadata];
+        }
+
+        this.rememberPendingRawSelection(rawFile);
+        return fileArray;
+    }
+
+    async promptForRawMetadataFile(rawFile = null) {
+        const rawBase = this.getRawBaseName(rawFile && rawFile.name ? rawFile.name : '').toLowerCase();
+
+        const ensureMatching = (file) => {
+            if (!file || !rawBase) return file;
+            const metadataBase = this.getRawMetadataBaseName(file.name);
+            if (!metadataBase || metadataBase !== rawBase) {
+                console.warn(
+                    `Selected metadata "${file.name}" base does not match RAW "${rawFile.name}". ` +
+                    'Proceeding because user explicitly selected this metadata file.'
+                );
+            }
+            return file;
+        };
+
+        if (typeof window.showOpenFilePicker === 'function') {
+            try {
+                const pickerOptions = {
+                    multiple: false,
+                    excludeAcceptAllOption: false,
+                    id: 'raw-metadata-picker',
+                    types: [{
+                        description: 'RAW metadata',
+                        accept: {
+                            'application/json': ['.json'],
+                            'text/plain': ['.dat', '.volumeinfo', '.raw.volumeinfo']
+                        }
+                    }]
+                };
+
+                const rawHandle = rawFile ? this.getFileHandle(rawFile) : null;
+                if (rawHandle) {
+                    pickerOptions.startIn = rawHandle;
+                }
+
+                const handles = await window.showOpenFilePicker(pickerOptions);
+                if (!handles || handles.length === 0) return null;
+                const picked = await handles[0].getFile();
+                return ensureMatching(picked);
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    return null;
+                }
+                console.warn('Metadata file picker failed, falling back to input element:', error);
+            }
+        }
+
+        return new Promise((resolve) => {
+            const picker = document.createElement('input');
+            picker.type = 'file';
+            picker.accept = '.json,.dat,.volumeinfo,.raw.volumeinfo';
+            picker.style.display = 'none';
+
+            const cleanup = () => {
+                picker.remove();
+            };
+
+            picker.addEventListener('change', () => {
+                const file = picker.files && picker.files.length > 0 ? picker.files[0] : null;
+                cleanup();
+                resolve(ensureMatching(file));
+            }, { once: true });
+
+            document.body.appendChild(picker);
+            picker.click();
+        });
+    }
+
+    getRawBaseName(fileName) {
+        if (!fileName || typeof fileName !== 'string') {
+            return '';
+        }
+        return fileName.replace(/\.raw$/i, '');
+    }
+
+    getRawMetadataBaseName(fileName) {
+        if (!fileName || typeof fileName !== 'string') {
+            return '';
+        }
+
+        return fileName
+            .toLowerCase()
+            .replace(/\.raw\.volumeinfo$/i, '')
+            .replace(/\.volumeinfo$/i, '')
+            .replace(/\.raw\.dat$/i, '')
+            .replace(/\.dat$/i, '')
+            .replace(/\.raw\.json$/i, '')
+            .replace(/\.json$/i, '');
     }
 
     initCTComponents() {
