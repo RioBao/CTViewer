@@ -36,6 +36,8 @@ class VolumeRenderer3D {
             roll: 0,          // Rotation around world Z axis (degrees)
             distance: 1.0     // Zoom factor (1.0 = fit to viewport)
         };
+        this.orientationQuat = { x: 0, y: 0, z: 0, w: 1 };
+        this.syncQuatFromCamera();
 
         // Quality presets - WebGL can handle higher resolutions
         // Total ray length = numSteps * stepSize, needs to be >= 2.0 to traverse volume
@@ -240,7 +242,9 @@ class VolumeRenderer3D {
         // Reset camera to default view
         this.camera.azimuth = 30;
         this.camera.elevation = 20;
+        this.camera.roll = 0;
         this.camera.distance = 1.0;
+        this.syncQuatFromCamera();
 
         // Initial render at medium quality
         this.renderAtQuality('medium');
@@ -463,7 +467,7 @@ class VolumeRenderer3D {
             this.lastTrackballVec = this.getTrackballVector(e.clientX, e.clientY);
             this.canvas.style.cursor = 'move';
         } else if (leftDown) {
-            // Left button: virtual trackball rotation (depends on click position)
+            // Left button: position-aware arcball rotation.
             const prevVec = this.lastTrackballVec || this.getTrackballVector(this.lastMouse.x, this.lastMouse.y);
             const currVec = this.getTrackballVector(e.clientX, e.clientY);
             this.applyTrackballDelta(prevVec, currVec);
@@ -602,21 +606,127 @@ class VolumeRenderer3D {
     }
 
     applyTrackballDelta(prev, curr) {
-        const crossX = prev.y * curr.z - prev.z * curr.y;
-        const crossY = prev.z * curr.x - prev.x * curr.z;
-        const crossZ = prev.x * curr.y - prev.y * curr.x;
-        const crossMag = Math.hypot(crossX, crossY, crossZ);
-        if (crossMag < 1e-6) return;
+        // Reverse mapping so drag direction feels non-inverted.
+        const deltaQuat = this.quatFromUnitVectors(curr, prev);
+        this.orientationQuat = this.quatNormalize(this.quatMultiply(deltaQuat, this.orientationQuat));
+        this.syncCameraFromQuat();
+    }
 
-        const dotRaw = prev.x * curr.x + prev.y * curr.y + prev.z * curr.z;
-        const dot = Math.max(-1, Math.min(1, dotRaw));
-        const angle = Math.atan2(crossMag, dot);
-        const degPerUnit = (angle * 180 / Math.PI) / crossMag;
+    applyTurntableDelta(prevClientX, prevClientY, currClientX, currClientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
 
-        // Map trackball axis components to camera angles.
-        this.camera.elevation += crossX * degPerUnit;
-        this.camera.roll += crossY * degPerUnit;
-        this.camera.azimuth += crossZ * degPerUnit;
+        const dx = currClientX - prevClientX;
+        const dy = currClientY - prevClientY;
+
+        // Spin around world Z based on angular motion around viewport center.
+        const prevVX = prevClientX - cx;
+        const prevVY = prevClientY - cy;
+        const currVX = currClientX - cx;
+        const currVY = currClientY - cy;
+        let deltaAngle = Math.atan2(currVY, currVX) - Math.atan2(prevVY, prevVX);
+        if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+        if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+
+        // Reduce spin sensitivity near center where angular signal is noisy.
+        const radiusPrev = Math.hypot(prevVX, prevVY);
+        const radiusCurr = Math.hypot(currVX, currVY);
+        const minHalf = Math.max(1, Math.min(rect.width, rect.height) * 0.5);
+        const radiusNorm = ((radiusPrev + radiusCurr) * 0.5) / minHalf;
+        const leverage = Math.max(0, Math.min(1, (radiusNorm - 0.12) / 0.88));
+        const spinDeltaDeg = (deltaAngle * 180 / Math.PI) * leverage;
+
+        const tiltSensitivity = 0.12;
+        const maxTilt = 75;
+        this.camera.roll += spinDeltaDeg;
+        const nextTilt = this.camera.elevation - dy * tiltSensitivity;
+        this.camera.elevation = Math.max(-maxTilt, Math.min(maxTilt, nextTilt));
+        this.syncQuatFromCamera();
+    }
+
+    syncQuatFromCamera() {
+        const az = this.camera.azimuth * Math.PI / 180;
+        const el = this.camera.elevation * Math.PI / 180;
+        const roll = (this.camera.roll || 0) * Math.PI / 180;
+
+        const qx = { x: Math.sin(el * 0.5), y: 0, z: 0, w: Math.cos(el * 0.5) };
+        const qy = { x: 0, y: Math.sin(az * 0.5), z: 0, w: Math.cos(az * 0.5) };
+        const qz = { x: 0, y: 0, z: Math.sin(roll * 0.5), w: Math.cos(roll * 0.5) };
+
+        // Match renderer convention: R = Rz(roll) * Ry(azimuth) * Rx(elevation)
+        this.orientationQuat = this.quatNormalize(this.quatMultiply(this.quatMultiply(qz, qy), qx));
+    }
+
+    syncCameraFromQuat() {
+        const q = this.quatNormalize(this.orientationQuat);
+        this.orientationQuat = q;
+
+        const x = q.x, y = q.y, z = q.z, w = q.w;
+        const xx = x * x, yy = y * y, zz = z * z;
+        const xy = x * y, xz = x * z, yz = y * z;
+        const wx = w * x, wy = w * y, wz = w * z;
+
+        // 3x3 rotation matrix from quaternion.
+        const m00 = 1 - 2 * (yy + zz);
+        const m01 = 2 * (xy - wz);
+        const m10 = 2 * (xy + wz);
+        const m11 = 1 - 2 * (xx + zz);
+        const m20 = 2 * (xz - wy);
+        const m21 = 2 * (yz + wx);
+        const m22 = 1 - 2 * (xx + yy);
+
+        // Decompose R = Rz * Ry * Rx (same order used in shaders/CPU renderer).
+        const az = Math.asin(Math.max(-1, Math.min(1, -m20)));
+        let el;
+        let roll;
+        if (Math.abs(m20) < 0.9999999) {
+            el = Math.atan2(m21, m22);
+            roll = Math.atan2(m10, m00);
+        } else {
+            // Gimbal lock fallback.
+            el = 0;
+            roll = Math.atan2(-m01, m11);
+        }
+
+        this.camera.azimuth = az * 180 / Math.PI;
+        this.camera.elevation = el * 180 / Math.PI;
+        this.camera.roll = roll * 180 / Math.PI;
+    }
+
+    quatMultiply(a, b) {
+        return {
+            x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+        };
+    }
+
+    quatNormalize(q) {
+        const len = Math.hypot(q.x, q.y, q.z, q.w);
+        if (len < 1e-12) return { x: 0, y: 0, z: 0, w: 1 };
+        const inv = 1 / len;
+        return { x: q.x * inv, y: q.y * inv, z: q.z * inv, w: q.w * inv };
+    }
+
+    quatFromUnitVectors(from, to) {
+        const EPS = 1e-6;
+        let r = from.x * to.x + from.y * to.y + from.z * to.z + 1;
+
+        if (r < EPS) {
+            // 180-degree turn: pick any orthogonal axis.
+            if (Math.abs(from.x) > Math.abs(from.z)) {
+                return this.quatNormalize({ x: -from.y, y: from.x, z: 0, w: 0 });
+            }
+            return this.quatNormalize({ x: 0, y: -from.z, z: from.y, w: 0 });
+        }
+
+        const crossX = from.y * to.z - from.z * to.y;
+        const crossY = from.z * to.x - from.x * to.z;
+        const crossZ = from.x * to.y - from.y * to.x;
+
+        return this.quatNormalize({ x: crossX, y: crossY, z: crossZ, w: r });
     }
 
     // ===== Progressive Rendering =====
@@ -710,6 +820,7 @@ class VolumeRenderer3D {
         this.camera.roll = 0;
         this.camera.distance = 1.0;
         this.pan = { x: 0, y: 0 };
+        this.syncQuatFromCamera();
         this.renderAtQuality(this.currentQuality);
     }
 
@@ -725,6 +836,7 @@ class VolumeRenderer3D {
      */
     setCamera(camera) {
         Object.assign(this.camera, camera);
+        this.syncQuatFromCamera();
         this.renderAtQuality(this.currentQuality);
     }
 
