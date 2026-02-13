@@ -256,14 +256,14 @@ class SliceRenderer {
             const x = this.canvas.width - w - 8;
             const y = this.canvas.height - h - 8;
 
-            // Background pill
-            this.ctx.fillStyle = 'rgba(255, 170, 0, 0.75)';
+            // Background pill (muted amber to match 3D status chip)
+            this.ctx.fillStyle = 'rgba(124, 99, 58, 0.74)';
             this.ctx.beginPath();
             this.ctx.roundRect(x, y, w, h, 4);
             this.ctx.fill();
 
             // Text
-            this.ctx.fillStyle = '#000';
+            this.ctx.fillStyle = '#efe4d1';
             this.ctx.fillText(text, x + padX, y + h - padY - 1);
 
             this.ctx.restore();

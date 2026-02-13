@@ -38,6 +38,8 @@ class ImageViewer {
         this.topOverlay = document.getElementById('topOverlay');
         this.toolDock = document.getElementById('toolDock');
         this.toolDockGrip = document.getElementById('toolDockGrip');
+        this.dockLogoBtn = document.getElementById('dockLogoBtn');
+        this.aboutPopover = document.getElementById('aboutPopover');
         this.histogramOverlay = document.getElementById('histogramOverlay');
         this.histogramGrip = document.getElementById('histogramGrip');
         this.histogramToggleBtn = document.getElementById('histogramToggleBtn');
@@ -80,6 +82,7 @@ class ImageViewer {
         return {
             histogramOpen: false,
             histogramPinned: false,
+            aboutOpen: false,
             crosshairEnabled: false,
             threeDPanelOpen: false,
             toolDockDragging: false,
@@ -98,6 +101,18 @@ class ImageViewer {
     }
 
     bindOverlayUI() {
+        if (this.dockLogoBtn) {
+            this.dockLogoBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleAboutPopover();
+            });
+        }
+
+        if (this.aboutPopover) {
+            this.aboutPopover.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+
         if (this.histogramToggleBtn) {
             this.histogramToggleBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -140,6 +155,15 @@ class ImageViewer {
 
         document.addEventListener('mousedown', (e) => {
             const target = e.target;
+
+            if (this.ui.aboutOpen &&
+                this.aboutPopover &&
+                !this.aboutPopover.contains(target) &&
+                this.dockLogoBtn &&
+                !this.dockLogoBtn.contains(target)) {
+                this.setAboutOpen(false);
+            }
+
             if (this.ui.histogramOpen &&
                 !this.ui.histogramPinned &&
                 this.histogramOverlay &&
@@ -157,6 +181,9 @@ class ImageViewer {
         });
 
         window.addEventListener('resize', () => {
+            if (this.ui.aboutOpen) {
+                this.positionAboutPopover();
+            }
             if (this.ui.histogramOpen) {
                 this.refreshHistogramOverlay();
             }
@@ -169,6 +196,7 @@ class ImageViewer {
         this.bind3DOverlayBehavior();
         this.bindToolDockDrag();
         this.bindHistogramDrag();
+        this.setAboutOpen(false);
         this.setHistogramOpen(false);
         this.set3DPanelOpen(false);
     }
@@ -311,6 +339,10 @@ class ImageViewer {
 
         this.toolDock.style.left = `${Math.round(clampedLeft)}px`;
         this.toolDock.style.top = `${Math.round(clampedTop)}px`;
+
+        if (this.ui.aboutOpen) {
+            this.positionAboutPopover();
+        }
 
         if (persist) {
             this.persistToolDockPosition();
@@ -468,6 +500,57 @@ class ImageViewer {
         this.set3DPanelOpen(next);
     }
 
+    setAboutOpen(open) {
+        this.ui.aboutOpen = !!open;
+
+        if (this.aboutPopover) {
+            this.aboutPopover.classList.toggle('open', this.ui.aboutOpen);
+            this.aboutPopover.setAttribute('aria-hidden', this.ui.aboutOpen ? 'false' : 'true');
+        }
+
+        if (this.dockLogoBtn) {
+            this.dockLogoBtn.classList.toggle('active', this.ui.aboutOpen);
+        }
+
+        if (this.ui.aboutOpen) {
+            this.positionAboutPopover();
+        }
+    }
+
+    toggleAboutPopover(forceOpen = null) {
+        const next = forceOpen === null ? !this.ui.aboutOpen : !!forceOpen;
+        this.setAboutOpen(next);
+    }
+
+    positionAboutPopover() {
+        if (!this.aboutPopover || !this.dropZone || !this.toolDock) return;
+
+        const containerRect = this.dropZone.getBoundingClientRect();
+        const dockRect = this.toolDock.getBoundingClientRect();
+        const panelWidth = this.aboutPopover.offsetWidth || 320;
+        const panelHeight = this.aboutPopover.offsetHeight || 164;
+        const gap = 10;
+
+        let left = (dockRect.right - containerRect.left) + gap;
+        let top = dockRect.top - containerRect.top;
+
+        const minLeft = 8;
+        const maxLeft = Math.max(8, containerRect.width - panelWidth - 8);
+        const minTop = 8;
+        const maxTop = Math.max(8, containerRect.height - panelHeight - 8);
+
+        if (left > maxLeft) {
+            left = (dockRect.left - containerRect.left) - panelWidth - gap;
+        }
+
+        const clampedLeft = Math.max(minLeft, Math.min(maxLeft, left));
+        const clampedTop = Math.max(minTop, Math.min(maxTop, top));
+
+        this.aboutPopover.style.left = `${Math.round(clampedLeft)}px`;
+        this.aboutPopover.style.top = `${Math.round(clampedTop)}px`;
+        this.aboutPopover.style.right = 'auto';
+    }
+
     setHistogramOpen(open) {
         this.ui.histogramOpen = !!open;
 
@@ -522,6 +605,11 @@ class ImageViewer {
 
     closeTransientOverlays() {
         let closed = false;
+
+        if (this.ui.aboutOpen) {
+            this.setAboutOpen(false);
+            closed = true;
+        }
 
         if (this.ui.histogramOpen && !this.ui.histogramPinned) {
             this.setHistogramOpen(false);

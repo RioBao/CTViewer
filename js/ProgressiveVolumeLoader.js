@@ -59,7 +59,12 @@ class ProgressiveVolumeLoader {
 
         console.log('Progressive loader: Creating low-res preview...');
         const { lowResData, lowResDims, min, max } = this.downsampleVolume(
-            fullData, [nx, ny, nz], this.DOWNSAMPLE_SCALE
+            fullData, [nx, ny, nz], this.DOWNSAMPLE_SCALE,
+            (percent) => {
+                if (callbacks.onProgress) {
+                    callbacks.onProgress({ stage: 'streaming', progress: percent });
+                }
+            }
         );
 
         // Create low-res volume object for 3D renderer
@@ -129,7 +134,12 @@ class ProgressiveVolumeLoader {
 
         console.log('Progressive loader (streaming): Creating low-res preview...');
         const { lowResData, lowResDims, min, max } = await this.downsampleVolumeStreaming(
-            file, metadata, this.DOWNSAMPLE_SCALE
+            file, metadata, this.DOWNSAMPLE_SCALE,
+            (percent) => {
+                if (callbacks.onProgress) {
+                    callbacks.onProgress({ stage: 'streaming', progress: percent });
+                }
+            }
         );
 
         // Create low-res volume object for 3D renderer
@@ -196,7 +206,12 @@ class ProgressiveVolumeLoader {
         console.log('Progressive loader (hybrid): Creating low-res preview from file...');
         const t0 = performance.now();
         const { lowResData, lowResDims, min, max } = await this.downsampleVolumeStreaming(
-            file, metadata, this.DOWNSAMPLE_SCALE
+            file, metadata, this.DOWNSAMPLE_SCALE,
+            (percent) => {
+                if (callbacks.onProgress) {
+                    callbacks.onProgress({ stage: 'streaming', progress: percent });
+                }
+            }
         );
 
         const lowResVolume = {
@@ -276,7 +291,7 @@ class ProgressiveVolumeLoader {
      * Create downsampled volume by streaming through file
      * Never loads full volume into memory
      */
-    async downsampleVolumeStreaming(file, metadata, scale) {
+    async downsampleVolumeStreaming(file, metadata, scale, progressCallback = null) {
         const [nx, ny, nz] = metadata.dimensions;
         const bytesPerVoxel = this.getBytesPerVoxel(metadata.dataType);
         const sliceSize = nx * ny * bytesPerVoxel;
@@ -291,6 +306,11 @@ class ProgressiveVolumeLoader {
 
         let min = Infinity;
         let max = -Infinity;
+
+        const reportInterval = Math.max(1, Math.floor(dstNz / 40));
+        if (progressCallback) {
+            progressCallback(0);
+        }
 
         // Process every 'scale'-th z-slice
         for (let dz = 0; dz < dstNz; dz++) {
@@ -334,10 +354,19 @@ class ProgressiveVolumeLoader {
             }
 
             // Progress update
+            const percent = Math.round(((dz + 1) / dstNz) * 100);
+            if (progressCallback && (dz === 0 || dz === dstNz - 1 || ((dz + 1) % reportInterval === 0))) {
+                progressCallback(percent);
+            }
+
             if (dz % 10 === 0) {
-                console.log(`Downsampling: ${Math.round((dz / dstNz) * 100)}%`);
+                console.log(`Downsampling: ${percent}%`);
                 await this.yieldToUI();
             }
+        }
+
+        if (progressCallback) {
+            progressCallback(100);
         }
 
         return { lowResData: dst, lowResDims: [dstNx, dstNy, dstNz], min, max };
@@ -418,7 +447,7 @@ class ProgressiveVolumeLoader {
      * Downsample volume using box averaging
      * Also calculates min/max during the pass
      */
-    downsampleVolume(srcData, srcDims, scale) {
+    downsampleVolume(srcData, srcDims, scale, progressCallback = null) {
         const [nx, ny, nz] = srcDims;
         const dstNx = Math.ceil(nx / scale);
         const dstNy = Math.ceil(ny / scale);
@@ -428,6 +457,11 @@ class ProgressiveVolumeLoader {
 
         let min = Infinity;
         let max = -Infinity;
+
+        const reportInterval = Math.max(1, Math.floor(dstNz / 40));
+        if (progressCallback) {
+            progressCallback(0);
+        }
 
         for (let dz = 0; dz < dstNz; dz++) {
             const szStart = dz * scale;
@@ -464,6 +498,14 @@ class ProgressiveVolumeLoader {
                     dst[dstIdx] = sum / count;
                 }
             }
+
+            if (progressCallback && (dz === 0 || dz === dstNz - 1 || ((dz + 1) % reportInterval === 0))) {
+                progressCallback(Math.round(((dz + 1) / dstNz) * 100));
+            }
+        }
+
+        if (progressCallback) {
+            progressCallback(100);
         }
 
         return {

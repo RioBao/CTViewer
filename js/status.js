@@ -121,7 +121,12 @@ class ViewerStatus {
             } else if (progress.stage === 'loading') {
                 progressEl.textContent = 'Loading volume data...';
             } else if (progress.stage === 'streaming') {
-                progressEl.textContent = 'Streaming mode: Creating preview...';
+                const percent = Number.isFinite(progress.progress)
+                    ? Math.max(0, Math.min(100, Math.round(progress.progress)))
+                    : null;
+                progressEl.textContent = percent === null
+                    ? 'Streaming mode: Creating preview...'
+                    : `Streaming mode: Creating preview... ${percent}%`;
             } else if (progress.stage === 'parsing' || progress.stage === 'processing') {
                 progressEl.textContent = 'Processing volume data...';
             } else if (progress.stage === 'complete') {

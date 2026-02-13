@@ -298,10 +298,10 @@ class ViewerControls {
         if (roiBtn) {
             if (isActive) {
                 roiBtn.classList.add('active');
-                roiBtn.title = 'ROI mode active - draw rectangle to set range';
+                roiBtn.title = 'Adjust contrast';
             } else {
                 roiBtn.classList.remove('active');
-                roiBtn.title = 'Set range from region';
+                roiBtn.title = 'Adjust contrast';
             }
         }
     }
@@ -318,7 +318,7 @@ class ViewerControls {
         if (isEnabled) {
             if (crosshairBtn) {
                 crosshairBtn.classList.add('active');
-                crosshairBtn.title = 'Crosshairs visible - click to hide';
+                crosshairBtn.title = 'Toggle crosshairs (C)';
             }
             if (viewer.pixelInfoGroup) {
                 viewer.pixelInfoGroup.style.display = 'inline-flex';
@@ -327,7 +327,7 @@ class ViewerControls {
         } else {
             if (crosshairBtn) {
                 crosshairBtn.classList.remove('active');
-                crosshairBtn.title = 'Crosshairs hidden - click to show';
+                crosshairBtn.title = 'Toggle crosshairs (C)';
             }
             if (viewer.pixelInfoGroup) {
                 viewer.pixelInfoGroup.style.display = 'none';

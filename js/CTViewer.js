@@ -947,7 +947,7 @@ class CTViewer {
 
         try {
             ctx.save();
-            ctx.strokeStyle = '#ffff00';
+            ctx.strokeStyle = '#e6d85e';
             ctx.lineWidth = 1;
             // Avoid setLineDash - known to cause GPU issues in Edge
             // ctx.setLineDash([]) is implicit when lineDash is not set
@@ -964,7 +964,7 @@ class CTViewer {
 
             // Draw small circle at intersection (separate path for arc)
             ctx.beginPath();
-            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.arc(x, y, 4, 0, 2 * Math.PI);
             ctx.stroke();
 
             ctx.restore();

@@ -37,9 +37,9 @@
                 </div>
 
                 <div class="tool-dock" id="toolDock">
-                    <div class="dock-logo-wrap" aria-hidden="true">
-                        <img src="icon/dock-logo2.png" alt="" class="dock-logo" draggable="false">
-                    </div>
+                    <button id="dockLogoBtn" class="dock-logo-wrap dock-logo-btn" title="VXL View - A lightweight 3D viewer" aria-label="VXL View - A lightweight 3D viewer">
+                        <img src="icon/dock-logo4.png" alt="" class="dock-logo" draggable="false">
+                    </button>
                     <div class="dock-grip" id="toolDockGrip" title="Drag tool dock">::</div>
                     <button id="zoomInBtn" class="dock-btn" title="Zoom In (+)" aria-label="Zoom In">
                         <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -73,7 +73,7 @@
                             <path d="M22 19V8"></path>
                         </svg>
                     </button>
-                    <button id="roiBtn" class="dock-btn" title="Set range from region (Esc to cancel)" aria-label="Set Range from Region" disabled>
+                    <button id="roiBtn" class="dock-btn" title="Adjust contrast" aria-label="Adjust contrast" disabled>
                         <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M7 7h10v10H7z"></path>
                             <path d="M3 9V5h4"></path>
@@ -82,6 +82,13 @@
                             <path d="M21 15v4h-4"></path>
                         </svg>
                     </button>
+                </div>
+
+                <div class="about-popover" id="aboutPopover" aria-hidden="true" role="dialog" aria-label="About StreamView">
+                    <div class="about-title">VXL View</div>
+                    <div class="about-subtitle">Lightweight Browser Volume Viewer</div>
+                    <p class="about-body">A fast, browser-based 3D volume viewer optimized for streaming large CT datasets with minimal overhead.</p>
+                    <div class="about-footer">WebGL &middot; Volume Raymarching &middot; Large Dataset Streaming</div>
                 </div>
 
                 <div class="image-wrapper" id="imageWrapper">

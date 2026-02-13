@@ -172,7 +172,7 @@ class Histogram {
 
             // Color bars based on whether they're in the active range
             if (i >= minBin && i <= maxBin) {
-                ctx.fillStyle = '#4a9eff';  // Active range - blue
+                ctx.fillStyle = '#5c8ec4';  // Active range - muted blue
             } else {
                 ctx.fillStyle = '#3a3a3a';  // Outside range - dark gray
             }

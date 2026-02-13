@@ -1,10 +1,10 @@
 :root {
-    --bg: #111318;
-    --panel: rgba(26, 29, 36, 0.85);
-    --sep: #2A2F3A;
+    --bg: #111214;
+    --panel: rgba(30, 32, 36, 0.86);
+    --sep: #343840;
     --text: #FFFFFF;
-    --text2: #8A8F98;
-    --accent: #006DFE;
+    --text2: #90959f;
+    --accent: #6f87a9;
     --radius: 10px;
     --pad: 12px;
 }
@@ -18,8 +18,8 @@
 body {
     font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     background:
-        radial-gradient(1200px 700px at 85% -10%, #1a2230 0%, transparent 60%),
-        radial-gradient(900px 600px at -10% 100%, #18212f 0%, transparent 55%),
+        radial-gradient(1200px 700px at 85% -10%, #1c2026 0%, transparent 60%),
+        radial-gradient(900px 600px at -10% 100%, #191c22 0%, transparent 55%),
         var(--bg);
     color: var(--text);
     height: 100vh;
@@ -53,7 +53,7 @@ body {
 
 #dropZone.drag-over {
     border-color: var(--accent);
-    background: rgba(0, 109, 254, 0.1);
+    background: rgba(111, 135, 169, 0.08);
 }
 
 .image-wrapper {
@@ -162,7 +162,7 @@ button.active {
     backdrop-filter: blur(10px);
     background: var(--panel);
     border-radius: var(--radius);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
     pointer-events: auto;
 }
 
@@ -196,13 +196,13 @@ button.active {
     background: var(--panel);
     backdrop-filter: blur(10px);
     border-radius: var(--radius);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
     pointer-events: auto;
 }
 
 .tool-dock.dragging {
     cursor: grabbing;
-    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.36);
 }
 
 .dock-logo-wrap {
@@ -213,6 +213,25 @@ button.active {
     justify-content: center;
     margin: 0 auto 2px;
     overflow: hidden;
+}
+
+.dock-logo-btn {
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.dock-logo-btn:hover:not(:disabled),
+.dock-logo-btn:focus-visible {
+    background: transparent;
+    opacity: 0.9;
+}
+
+.dock-logo-btn.active {
+    background: transparent;
+    color: inherit;
 }
 
 .dock-logo {
@@ -227,6 +246,61 @@ button.active {
     transform: none;
     user-select: none;
     pointer-events: none;
+}
+
+.about-popover {
+    position: absolute;
+    left: 64px;
+    top: 80px;
+    width: min(340px, calc(100% - 24px));
+    z-index: 84;
+    padding: 10px;
+    border-radius: var(--radius);
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-4px) scale(0.99);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.about-popover.open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0s;
+}
+
+.about-title {
+    font-size: 0.94rem;
+    font-weight: 700;
+    color: #f2f4f7;
+    letter-spacing: 0.01em;
+}
+
+.about-subtitle {
+    margin-top: 2px;
+    font-size: 0.75rem;
+    color: rgba(144, 149, 159, 0.82);
+}
+
+.about-body {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: #d6dce4;
+}
+
+.about-footer {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--sep);
+    font-size: 0.68rem;
+    color: #7e8693;
+    letter-spacing: 0.03em;
 }
 
 .dock-grip {
@@ -264,12 +338,12 @@ button.active {
 }
 
 .dock-btn.active {
-    background: rgba(0, 109, 254, 0.72);
+    background: rgba(111, 135, 169, 0.46);
     color: #ffffff;
 }
 
 .dock-btn.active:hover:not(:disabled) {
-    background: rgba(0, 109, 254, 0.82);
+    background: rgba(111, 135, 169, 0.56);
 }
 
 .histogram-overlay {
@@ -277,22 +351,30 @@ button.active {
     right: 16px;
     top: 80px;
     width: 260px;
-    display: none;
     z-index: 82;
     padding: 10px;
     border-radius: var(--radius);
     background: var(--panel);
     backdrop-filter: blur(10px);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 5px 13px rgba(0, 0, 0, 0.24);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-4px) scale(0.99);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
 }
 
 .histogram-overlay.open {
-    display: block;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0s;
 }
 
 .histogram-overlay.dragging {
     cursor: grabbing;
-    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.48);
+    box-shadow: 0 7px 17px rgba(0, 0, 0, 0.3);
 }
 
 .overlay-title-row {
@@ -359,8 +441,8 @@ button.active {
 }
 
 #histogramPinBtn.active {
-    background: rgba(0, 109, 254, 0.24);
-    color: #d9e8ff;
+    background: rgba(111, 135, 169, 0.2);
+    color: #dde5f0;
 }
 
 .histogram-container {
@@ -393,7 +475,7 @@ button.active {
 }
 
 .handle:hover {
-    background: rgba(0, 109, 254, 0.28);
+    background: rgba(111, 135, 169, 0.2);
 }
 
 .handle-min {
@@ -425,7 +507,7 @@ button.active {
     border-radius: var(--radius);
     background: var(--panel);
     backdrop-filter: blur(10px);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
 
 .slice-overlay.visible {
@@ -433,19 +515,21 @@ button.active {
 }
 
 .slice-indicator {
-    font-size: 0.72rem;
-    color: #d9e0ea;
+    font-size: 0.68rem;
+    color: rgba(255, 255, 255, 0.76);
     line-height: 1;
     white-space: nowrap;
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.08);
-    padding: 6px 8px;
+    background: rgba(22, 26, 33, 0.22);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    padding: 5px 7px;
 }
 
 .slice-value {
     align-items: center;
-    background: rgba(0, 109, 254, 0.16);
-    color: #dce9ff;
+    background: rgba(111, 135, 169, 0.12);
+    color: #e0e7f1;
     font-weight: 700;
 }
 
@@ -459,7 +543,7 @@ button.active {
     border-radius: var(--radius);
     background: var(--panel);
     backdrop-filter: blur(10px);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
 
 .pixel-overlay.visible {
@@ -495,6 +579,14 @@ button.active {
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+
+.viewport-container:hover,
+.viewport-container:focus-within {
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    background: #0d1118;
 }
 
 .viewport-canvas {
@@ -541,14 +633,14 @@ button.active {
     gap: 8px;
     background: var(--panel);
     backdrop-filter: blur(10px);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
     font-size: 0.72rem;
     color: #d8e0eb;
 }
 
 .viewport-3d-chip.alert {
-    background: rgba(152, 108, 26, 0.62);
-    color: #f5e7cb;
+    background: rgba(124, 99, 58, 0.58);
+    color: #e8dcc6;
 }
 
 .viewport-3d-panel {
@@ -560,7 +652,7 @@ button.active {
     border-radius: var(--radius);
     background: var(--panel);
     backdrop-filter: blur(10px);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
 }
 
@@ -590,7 +682,7 @@ button.active {
     padding: 0 8px;
     border-radius: 7px;
     border: 1px solid var(--sep);
-    background: #1a2130;
+    background: #20242b;
     color: #ffffff;
     font-size: 0.78rem;
     appearance: none;
@@ -598,17 +690,17 @@ button.active {
 }
 
 .control-row select:hover {
-    background: #232d42;
+    background: #2a2f37;
 }
 
 .control-row select:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px rgba(0, 109, 254, 0.3);
+    box-shadow: 0 0 0 1px rgba(111, 135, 169, 0.22);
 }
 
 .viewport-3d-panel select option {
-    background: #141a24;
+    background: #1a1f26;
     color: #ffffff;
 }
 
@@ -648,7 +740,7 @@ button.active {
     width: 50px;
     height: 50px;
     border: 4px solid #303846;
-    border-top-color: var(--accent);
+    border-top-color: #8f96a3;
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -689,6 +781,11 @@ button.active {
     font-weight: 600;
 }
 
+#imageInfo,
+#zoomLevel {
+    color: rgba(214, 221, 231, 0.76);
+}
+
 .fullscreen {
     position: fixed;
     inset: 0;
@@ -713,6 +810,10 @@ button.active {
         right: 12px;
         top: 72px;
         width: min(260px, calc(100% - 24px));
+    }
+
+    .about-popover {
+        width: min(320px, calc(100% - 24px));
     }
 
     .slice-overlay {
@@ -746,5 +847,15 @@ button.active {
 
     .viewport-3d-panel {
         width: min(220px, calc(100vw - 40px));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .about-popover,
+    .about-popover.open,
+    .histogram-overlay,
+    .histogram-overlay.open {
+        transition: none;
+        transform: none;
     }
 }
