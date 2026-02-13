@@ -37,10 +37,26 @@ class ViewerStatus {
         document.addEventListener('crosshairchange', (e) => {
             const { value } = e.detail;
             if (viewer.pixelInfo) {
-                const gray = Number.isFinite(value) ? Math.round(value) : '--';
-                viewer.pixelInfo.textContent = `V=${gray}`;
+                viewer.pixelInfo.textContent = `V=${this.formatVoxelValue(value)}`;
             }
         });
+    }
+
+    formatVoxelValue(value) {
+        const viewer = this.viewer;
+        if (!Number.isFinite(value)) return '--';
+
+        const dataType = viewer && viewer.ctViewer && viewer.ctViewer.volumeData
+            ? String(viewer.ctViewer.volumeData.dataType || '').toLowerCase()
+            : '';
+        const isIntegerType = dataType === 'uint8' || dataType === 'uint16' || dataType === 'int16' || dataType === 'int32';
+
+        if (isIntegerType) {
+            return `${Math.round(value)}`;
+        }
+
+        // Float-like data: keep precision so values don't collapse to 0/1/2.
+        return `${Number(value).toFixed(2)}`;
     }
 
     updateVolumeUI({ name, dimensions, label, loading = false }) {
