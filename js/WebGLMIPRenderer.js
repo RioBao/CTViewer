@@ -68,7 +68,8 @@ class WebGLMIPRenderer {
         ]);
 
         // Set up WebGL state
-        gl.clearColor(0.04, 0.04, 0.04, 1.0);  // Match #0a0a0a background
+        // Match 2D viewport background (#0A0D13) for consistent panel tone.
+        gl.clearColor(10 / 255, 13 / 255, 19 / 255, 1.0);
         gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.BLEND);
 

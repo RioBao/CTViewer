@@ -283,10 +283,10 @@ class VolumeRenderer3D {
         if (this.useWebGL) {
             const gl = this.gl;
             gl.viewport(0, 0, this.displaySize, this.displaySize);
-            gl.clearColor(0.1, 0.1, 0.1, 1.0);
+            gl.clearColor(10 / 255, 13 / 255, 19 / 255, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
         } else {
-            this.ctx.fillStyle = '#1a1a1a';
+            this.ctx.fillStyle = '#0A0D13';
             this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
         }
 
@@ -396,7 +396,7 @@ class VolumeRenderer3D {
 
             // Scale up to display canvas with smoothing disabled for crisp pixels
             this.ctx.imageSmoothingEnabled = false;
-            this.ctx.fillStyle = '#0a0a0a';
+            this.ctx.fillStyle = '#0A0D13';
             this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
             // Apply pan offset when drawing
             this.ctx.drawImage(

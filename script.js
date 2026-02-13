@@ -46,6 +46,7 @@ class ImageViewer {
         this.histogramPinBtn = document.getElementById('histogramPinBtn');
         this.histogramCloseBtn = document.getElementById('histogramCloseBtn');
         this.sliceControls = document.getElementById('sliceControls');
+        this.sliceGrip = document.getElementById('sliceGrip');
 
         this.viewport3DControls = document.getElementById('viewport3DControls');
         this.viewport3DChip = document.getElementById('viewport3DChip');
@@ -95,6 +96,11 @@ class ImageViewer {
             histogramStartY: 0,
             histogramStartLeft: 0,
             histogramStartTop: 80,
+            sliceDragging: false,
+            sliceStartX: 0,
+            sliceStartY: 0,
+            sliceStartLeft: 16,
+            sliceStartTop: 0,
             topOverlayTimer: null,
             threeDControlsTimer: null
         };
@@ -138,6 +144,9 @@ class ImageViewer {
 
         if (this.histogramOverlay) {
             this.histogramOverlay.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+        if (this.sliceControls) {
+            this.sliceControls.addEventListener('mousedown', (e) => e.stopPropagation());
         }
 
         if (this.viewport3DChip) {
@@ -189,6 +198,7 @@ class ImageViewer {
             }
             this.clampToolDockPosition();
             this.clampHistogramPosition();
+            this.clampSliceOverlayPosition();
             this.update3DStatusChip();
         });
 
@@ -196,6 +206,7 @@ class ImageViewer {
         this.bind3DOverlayBehavior();
         this.bindToolDockDrag();
         this.bindHistogramDrag();
+        this.bindSliceOverlayDrag();
         this.setAboutOpen(false);
         this.setHistogramOpen(false);
         this.set3DPanelOpen(false);
@@ -456,6 +467,100 @@ class ImageViewer {
         try {
             localStorage.setItem('viewer.histogram.left', `${Math.round(parseFloat(this.histogramOverlay.style.left || '0'))}`);
             localStorage.setItem('viewer.histogram.top', `${Math.round(parseFloat(this.histogramOverlay.style.top || '80'))}`);
+        } catch (error) {
+            // Persistence is optional; ignore storage failures.
+        }
+    }
+
+    bindSliceOverlayDrag() {
+        if (!this.sliceControls || !this.sliceGrip || !this.dropZone) return;
+
+        let savedLeft = NaN;
+        let savedTop = NaN;
+        try {
+            savedLeft = parseInt(localStorage.getItem('viewer.sliceOverlay.left') || '', 10);
+            savedTop = parseInt(localStorage.getItem('viewer.sliceOverlay.top') || '', 10);
+        } catch (error) {
+            // Ignore storage read failures.
+        }
+        if (Number.isFinite(savedLeft) && Number.isFinite(savedTop)) {
+            this.setSliceOverlayPosition(savedLeft, savedTop, false);
+        }
+
+        const onPointerMove = (e) => {
+            if (!this.ui.sliceDragging) return;
+            e.preventDefault();
+            const nextLeft = this.ui.sliceStartLeft + (e.clientX - this.ui.sliceStartX);
+            const nextTop = this.ui.sliceStartTop + (e.clientY - this.ui.sliceStartY);
+            this.setSliceOverlayPosition(nextLeft, nextTop, false);
+        };
+
+        const onPointerUp = () => {
+            if (!this.ui.sliceDragging) return;
+            this.ui.sliceDragging = false;
+            this.sliceControls.classList.remove('dragging');
+            this.persistSliceOverlayPosition();
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+        };
+
+        this.sliceGrip.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const containerRect = this.dropZone.getBoundingClientRect();
+            const overlayRect = this.sliceControls.getBoundingClientRect();
+            this.ui.sliceDragging = true;
+            this.ui.sliceStartX = e.clientX;
+            this.ui.sliceStartY = e.clientY;
+            this.ui.sliceStartLeft = overlayRect.left - containerRect.left;
+            this.ui.sliceStartTop = overlayRect.top - containerRect.top;
+
+            this.sliceControls.classList.add('dragging');
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
+        });
+    }
+
+    setSliceOverlayPosition(left, top, persist = true) {
+        if (!this.sliceControls || !this.dropZone) return;
+
+        const containerRect = this.dropZone.getBoundingClientRect();
+        const panelWidth = this.sliceControls.offsetWidth || 260;
+        const panelHeight = this.sliceControls.offsetHeight || 34;
+        const maxLeft = Math.max(8, containerRect.width - panelWidth - 8);
+        const maxTop = Math.max(8, containerRect.height - panelHeight - 8);
+
+        const clampedLeft = Math.max(8, Math.min(maxLeft, left));
+        const clampedTop = Math.max(8, Math.min(maxTop, top));
+
+        this.sliceControls.style.left = `${Math.round(clampedLeft)}px`;
+        this.sliceControls.style.top = `${Math.round(clampedTop)}px`;
+        this.sliceControls.style.bottom = 'auto';
+        this.sliceControls.style.right = 'auto';
+
+        if (persist) {
+            this.persistSliceOverlayPosition();
+        }
+    }
+
+    clampSliceOverlayPosition() {
+        if (!this.sliceControls) return;
+        if (!this.sliceControls.style.left || !this.sliceControls.style.top) return;
+
+        const left = parseFloat(this.sliceControls.style.left || '16');
+        const top = parseFloat(this.sliceControls.style.top || '16');
+        this.setSliceOverlayPosition(left, top, false);
+    }
+
+    persistSliceOverlayPosition() {
+        if (!this.sliceControls || !this.sliceControls.style.left) return;
+        try {
+            localStorage.setItem('viewer.sliceOverlay.left', `${Math.round(parseFloat(this.sliceControls.style.left || '16'))}`);
+            localStorage.setItem('viewer.sliceOverlay.top', `${Math.round(parseFloat(this.sliceControls.style.top || '16'))}`);
         } catch (error) {
             // Persistence is optional; ignore storage failures.
         }

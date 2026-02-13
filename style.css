@@ -510,8 +510,33 @@ button.active {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
 
+.slice-overlay.dragging {
+    cursor: grabbing;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.36);
+}
+
 .slice-overlay.visible {
     display: flex;
+}
+
+.slice-grip {
+    width: 16px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text2);
+    font-size: 9px;
+    letter-spacing: 1px;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    padding: 0 2px;
+}
+
+.slice-grip:active {
+    cursor: grabbing;
 }
 
 .slice-indicator {
@@ -603,7 +628,7 @@ button.active {
 }
 
 .viewport-3d {
-    background: #0c1119;
+    background: #0A0D13;
 }
 
 .viewport-3d-controls {
