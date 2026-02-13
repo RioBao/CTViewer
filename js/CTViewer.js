@@ -32,6 +32,16 @@ class CTViewer {
         this.roiEnd = { x: 0, y: 0 };
         this.roiCanvas = null; // Overlay canvas for drawing ROI
 
+        // Ruler state
+        this.rulerMode = false;
+        this.rulerDrawing = false;
+        this.rulerDragAxis = null;
+        this.rulerMeasurements = {
+            xy: null,
+            xz: null,
+            yz: null
+        };
+
         // Crosshair state - current 3D position
         this.crosshairPosition = { x: 0, y: 0, z: 0 };
         this.crosshairEnabled = false;
@@ -89,6 +99,7 @@ class CTViewer {
      */
     loadVolume(volumeData) {
         this.volumeData = volumeData;
+        this.clearRulerMeasurements();
 
         // Initialize slice indices to middle of volume
         const [nx, ny, nz] = volumeData.dimensions;
@@ -163,6 +174,7 @@ class CTViewer {
      */
     handleLowResReady(lowResVolume) {
         this.lowResVolume = lowResVolume;
+        this.clearRulerMeasurements();
 
         // progressiveVolume and volumeData should already be set by caller
         if (!this.progressiveVolume) {
@@ -312,7 +324,7 @@ class CTViewer {
             const enhancedVolume = await this.progressiveVolume.createEnhanced3DVolume(onProgress);
 
             if (enhancedVolume) {
-                this.renderer3D.loadVolume(enhancedVolume);
+                this.renderer3D.loadVolume(enhancedVolume, { preserveView: true });
                 console.log('CTViewer: 3D enhancement complete');
                 return true;
             }
@@ -356,6 +368,7 @@ class CTViewer {
             if (this.crosshairEnabled) {
                 this.drawCrosshairs();
             }
+            this.drawAllRulers();
         } catch (error) {
             console.error('Rendering error:', error);
         }
@@ -380,6 +393,7 @@ class CTViewer {
             };
             this.renderers[axis].updateParameters(params);
             this.renderers[axis].render(slice, this.imageProcessor);
+            this.drawRulerOnView(axis);
         } catch (error) {
             console.error(`Rendering error for ${axis}:`, error);
         }
@@ -454,6 +468,22 @@ class CTViewer {
      * Handle mouse down
      */
     handleMouseDown(e, axis) {
+        if (this.rulerMode) {
+            const start = this.getImageCoordsFromMouseEvent(e, axis);
+            if (!start) return;
+
+            this.rulerMeasurements[axis] = {
+                start: { x: start.x, y: start.y },
+                end: { x: start.x, y: start.y }
+            };
+            this.rulerDrawing = true;
+            this.rulerDragAxis = axis;
+            this.state.activeView = axis;
+            e.target.style.cursor = 'crosshair';
+            this.renderAllViews();
+            return;
+        }
+
         if (this.roiMode) {
             this.roiSelecting = true;
             this.roiStart = { x: e.clientX, y: e.clientY };
@@ -486,6 +516,17 @@ class CTViewer {
      * Handle mouse move
      */
     handleMouseMove(e, axis) {
+        if (this.rulerDrawing) {
+            const current = this.getImageCoordsFromMouseEvent(e, this.rulerDragAxis || axis);
+            if (!current) return;
+            const rulerAxis = this.rulerDragAxis || axis;
+            if (this.rulerMeasurements[rulerAxis]) {
+                this.rulerMeasurements[rulerAxis].end = { x: current.x, y: current.y };
+                this.renderAllViews();
+            }
+            return;
+        }
+
         if (this.roiSelecting) {
             this.roiEnd = { x: e.clientX, y: e.clientY };
             this.drawRoiRectangle(e.target);
@@ -498,7 +539,7 @@ class CTViewer {
         }
 
         // Update cursor based on proximity to crosshair
-        if (!this.isDragging && this.crosshairEnabled && !this.roiMode) {
+        if (!this.isDragging && this.crosshairEnabled && !this.roiMode && !this.rulerMode) {
             if (this.isNearCrosshair(e, axis)) {
                 e.target.style.cursor = 'move';
             } else {
@@ -527,12 +568,25 @@ class CTViewer {
      * Handle mouse up
      */
     handleMouseUp(e, axis) {
+        if (this.rulerDrawing) {
+            const rulerAxis = this.rulerDragAxis || axis;
+            const end = this.getImageCoordsFromMouseEvent(e, rulerAxis);
+            if (end && this.rulerMeasurements[rulerAxis]) {
+                this.rulerMeasurements[rulerAxis].end = { x: end.x, y: end.y };
+            }
+            this.rulerDrawing = false;
+            this.rulerDragAxis = null;
+            this.renderAllViews();
+            e.target.style.cursor = this.rulerMode ? 'crosshair' : (this.roiMode ? 'crosshair' : 'grab');
+            return;
+        }
+
         if (this.roiSelecting) {
             this.roiSelecting = false;
             this.roiEnd = { x: e.clientX, y: e.clientY };
             this.applyRoiSelection(e.target, axis);
             this.removeRoiOverlay();
-            e.target.style.cursor = this.roiMode ? 'crosshair' : 'grab';
+            e.target.style.cursor = this.roiMode || this.rulerMode ? 'crosshair' : 'grab';
             return;
         }
 
@@ -990,6 +1044,167 @@ class CTViewer {
         return this.crosshairEnabled;
     }
 
+    // ===== Ruler Methods =====
+
+    toggleRulerMode() {
+        const nextMode = !this.rulerMode;
+        this.rulerMode = nextMode;
+
+        if (this.rulerMode && this.roiMode) {
+            this.roiMode = false;
+            this.roiSelecting = false;
+            this.removeRoiOverlay();
+        }
+
+        if (!this.rulerMode) {
+            this.rulerDrawing = false;
+            this.rulerDragAxis = null;
+            this.clearRulerMeasurements();
+        }
+
+        Object.values(this.renderers).forEach(renderer => {
+            if (renderer && renderer.canvas) {
+                renderer.canvas.style.cursor = (this.rulerMode || this.roiMode) ? 'crosshair' : 'grab';
+            }
+        });
+
+        this.renderAllViews();
+        return this.rulerMode;
+    }
+
+    isRulerMode() {
+        return this.rulerMode;
+    }
+
+    clearRulerMeasurements() {
+        this.rulerDrawing = false;
+        this.rulerDragAxis = null;
+        this.rulerMeasurements.xy = null;
+        this.rulerMeasurements.xz = null;
+        this.rulerMeasurements.yz = null;
+    }
+
+    getImageCoordsFromMouseEvent(e, axis) {
+        const renderer = this.renderers[axis];
+        if (!renderer || !renderer.canvas || !this.volumeData) return null;
+        if (!e || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return null;
+
+        const canvas = renderer.canvas;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const canvasX = (e.clientX - rect.left) * scaleX;
+        const canvasY = (e.clientY - rect.top) * scaleY;
+
+        const coords = this.canvasToImageCoords(canvasX, canvasY, renderer);
+        if (!coords) return null;
+
+        const max = axis === 'xy'
+            ? { x: renderer.currentWidth - 1, y: renderer.currentHeight - 1 }
+            : axis === 'xz'
+                ? { x: renderer.currentWidth - 1, y: renderer.currentHeight - 1 }
+                : { x: renderer.currentWidth - 1, y: renderer.currentHeight - 1 };
+
+        return {
+            x: Math.max(0, Math.min(max.x, coords.x)),
+            y: Math.max(0, Math.min(max.y, coords.y))
+        };
+    }
+
+    drawAllRulers() {
+        this.drawRulerOnView('xy');
+        this.drawRulerOnView('xz');
+        this.drawRulerOnView('yz');
+    }
+
+    drawRulerOnView(axis) {
+        const measurement = this.rulerMeasurements[axis];
+        if (!measurement) return;
+
+        const renderer = this.renderers[axis];
+        if (!renderer || !renderer.canvas) return;
+        const startCanvas = this.imageToCanvasCoords(measurement.start.x, measurement.start.y, renderer);
+        const endCanvas = this.imageToCanvasCoords(measurement.end.x, measurement.end.y, renderer);
+        if (!startCanvas || !endCanvas) return;
+
+        const distance = this.computeRulerDistance(axis, measurement.start, measurement.end);
+        const label = this.formatRulerDistance(distance);
+        const midX = (startCanvas.x + endCanvas.x) * 0.5;
+        const midY = (startCanvas.y + endCanvas.y) * 0.5;
+
+        const ctx = renderer.canvas.getContext('2d');
+        try {
+            ctx.save();
+            ctx.strokeStyle = '#62d5ff';
+            ctx.fillStyle = '#62d5ff';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(startCanvas.x, startCanvas.y);
+            ctx.lineTo(endCanvas.x, endCanvas.y);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(startCanvas.x, startCanvas.y, 3, 0, 2 * Math.PI);
+            ctx.arc(endCanvas.x, endCanvas.y, 3, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            const textW = ctx.measureText(label).width;
+            const padX = 6;
+            const padY = 4;
+            const boxH = 18;
+            const boxW = textW + padX * 2;
+            const boxX = Math.max(4, Math.min(renderer.canvas.width - boxW - 4, midX + 8));
+            const boxY = Math.max(boxH + 4, Math.min(renderer.canvas.height - 4, midY - 8));
+
+            ctx.fillStyle = 'rgba(14, 18, 24, 0.82)';
+            ctx.strokeStyle = 'rgba(98, 213, 255, 0.68)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(boxX, boxY - boxH, boxW, boxH, 4);
+            } else {
+                ctx.rect(boxX, boxY - boxH, boxW, boxH);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#d7f4ff';
+            ctx.fillText(label, boxX + padX, boxY - padY);
+            ctx.restore();
+        } catch (e) {
+            try { ctx.restore(); } catch (e2) { /* ignore */ }
+        }
+    }
+
+    computeRulerDistance(axis, start, end) {
+        const spacing = (this.volumeData && Array.isArray(this.volumeData.spacing))
+            ? this.volumeData.spacing
+            : [1, 1, 1];
+        const sx = Number.isFinite(spacing[0]) ? spacing[0] : 1;
+        const sy = Number.isFinite(spacing[1]) ? spacing[1] : 1;
+        const sz = Number.isFinite(spacing[2]) ? spacing[2] : 1;
+
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+
+        if (axis === 'xy') {
+            return Math.hypot(dx * sx, dy * sy);
+        }
+        if (axis === 'xz') {
+            return Math.hypot(dx * sx, dy * sz);
+        }
+        return Math.hypot(dx * sy, dy * sz);
+    }
+
+    formatRulerDistance(distance) {
+        if (!Number.isFinite(distance)) return '--';
+        if (distance >= 100) return `${distance.toFixed(0)} mm`;
+        if (distance >= 10) return `${distance.toFixed(1)} mm`;
+        return `${distance.toFixed(2)} mm`;
+    }
+
     // ===== ROI Selection Methods =====
 
     /**
@@ -998,10 +1213,16 @@ class CTViewer {
     toggleRoiMode() {
         this.roiMode = !this.roiMode;
 
+        if (this.roiMode && this.rulerMode) {
+            this.rulerMode = false;
+            this.rulerDrawing = false;
+            this.rulerDragAxis = null;
+        }
+
         // Update cursor for all canvases
         Object.values(this.renderers).forEach(renderer => {
             if (renderer && renderer.canvas) {
-                renderer.canvas.style.cursor = this.roiMode ? 'crosshair' : 'grab';
+                renderer.canvas.style.cursor = (this.roiMode || this.rulerMode) ? 'crosshair' : 'grab';
             }
         });
 

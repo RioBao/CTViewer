@@ -191,7 +191,11 @@ class VolumeRenderer3D {
     /**
      * Load volume data for rendering
      */
-    loadVolume(volumeData) {
+    loadVolume(volumeData, options = {}) {
+        const preserveView = !!(options && options.preserveView);
+        const preservedCamera = preserveView ? { ...this.camera } : null;
+        const preservedPan = preserveView ? { ...this.pan } : null;
+
         this.volumeData = volumeData;
 
         if (this.useWebGL) {
@@ -239,15 +243,26 @@ class VolumeRenderer3D {
         // Log renderer info
         this.logRendererInfo();
 
-        // Reset camera to default view
-        this.camera.azimuth = 30;
-        this.camera.elevation = 20;
-        this.camera.roll = 0;
-        this.camera.distance = 1.0;
-        this.syncQuatFromCamera();
+        if (preserveView && preservedCamera && preservedPan) {
+            this.camera.azimuth = preservedCamera.azimuth;
+            this.camera.elevation = preservedCamera.elevation;
+            this.camera.roll = preservedCamera.roll;
+            this.camera.distance = preservedCamera.distance;
+            this.pan = preservedPan;
+            this.syncQuatFromCamera();
+            this.renderAtQuality(this.currentQuality);
+        } else {
+            // Reset camera to default view for newly loaded datasets.
+            this.camera.azimuth = 30;
+            this.camera.elevation = 20;
+            this.camera.roll = 0;
+            this.camera.distance = 1.0;
+            this.pan = { x: 0, y: 0 };
+            this.syncQuatFromCamera();
 
-        // Initial render at medium quality
-        this.renderAtQuality('medium');
+            // Initial render at medium quality
+            this.renderAtQuality('medium');
+        }
     }
 
     /**

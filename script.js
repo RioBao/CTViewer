@@ -1318,7 +1318,7 @@ class ImageViewer {
         if (value === 'low') {
             const lowVolume = (this.volumeState && this.volumeState.lowResVolume) || this.ctViewer.volumeData;
             if (lowVolume) {
-                this.ctViewer.renderer3D.loadVolume(lowVolume);
+                this.ctViewer.renderer3D.loadVolume(lowVolume, { preserveView: true });
             }
             this.update3DStatusChip();
             return;
@@ -1326,7 +1326,7 @@ class ImageViewer {
 
         if (value === 'mid') {
             if (this.cachedMid3DVolume) {
-                this.ctViewer.renderer3D.loadVolume(this.cachedMid3DVolume);
+                this.ctViewer.renderer3D.loadVolume(this.cachedMid3DVolume, { preserveView: true });
                 this.update3DStatusChip();
                 return;
             }
@@ -1375,7 +1375,7 @@ class ImageViewer {
             }
 
             if (fullVolume) {
-                this.ctViewer.renderer3D.loadVolume(fullVolume);
+                this.ctViewer.renderer3D.loadVolume(fullVolume, { preserveView: true });
             }
         }
 
@@ -1521,6 +1521,12 @@ class ImageViewer {
             crosshairBtn.disabled = false;
         }
 
+        const rulerBtn = document.getElementById('rulerBtn');
+        if (rulerBtn) {
+            rulerBtn.disabled = false;
+            rulerBtn.classList.toggle('active', !!(this.ctViewer && this.ctViewer.isRulerMode && this.ctViewer.isRulerMode()));
+        }
+
         // Set crosshair state based on CTViewer
         if (this.ctViewer && this.ctViewer.isCrosshairEnabled()) {
             this.ui.crosshairEnabled = true;
@@ -1534,6 +1540,10 @@ class ImageViewer {
             if (this.pixelInfoGroup) {
                 this.pixelInfoGroup.style.display = 'none';
             }
+        }
+
+        if (roiBtn) {
+            roiBtn.classList.toggle('active', !!(this.ctViewer && this.ctViewer.isRoiMode && this.ctViewer.isRoiMode()));
         }
 
         if (this.status && typeof this.status.refreshSliceIndicators === 'function') {

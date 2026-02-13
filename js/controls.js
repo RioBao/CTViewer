@@ -13,6 +13,7 @@ class ViewerControls {
         const fullscreenBtn = document.getElementById('fullscreenBtn');
         const roiBtn = document.getElementById('roiBtn');
         const crosshairBtn = document.getElementById('crosshairBtn');
+        const rulerBtn = document.getElementById('rulerBtn');
 
         if (openBtn) {
             openBtn.addEventListener('click', () => {
@@ -29,6 +30,7 @@ class ViewerControls {
         if (fullscreenBtn) fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
         if (roiBtn) roiBtn.addEventListener('click', () => this.toggleRoiMode());
         if (crosshairBtn) crosshairBtn.addEventListener('click', () => this.toggleCrosshairs());
+        if (rulerBtn) rulerBtn.addEventListener('click', () => this.toggleRulerMode());
 
         viewer.fileInput.addEventListener('change', (e) => {
             if (e.target.files && e.target.files.length > 0) {
@@ -117,6 +119,12 @@ class ViewerControls {
                     this.toggleCrosshairs();
                 }
                 break;
+            case 'm':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.toggleRulerMode();
+                }
+                break;
             case 'f':
                 if (!e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
@@ -192,6 +200,10 @@ class ViewerControls {
                 }
                 if (viewer.ctViewer && viewer.ctViewer.isRoiMode()) {
                     this.toggleRoiMode();
+                    handled = true;
+                }
+                if (viewer.ctViewer && viewer.ctViewer.isRulerMode && viewer.ctViewer.isRulerMode()) {
+                    this.toggleRulerMode();
                     handled = true;
                 }
                 if (handled) {
@@ -311,16 +323,28 @@ class ViewerControls {
         if (!viewer.ctViewer) return;
 
         const roiBtn = document.getElementById('roiBtn');
+        const rulerBtn = document.getElementById('rulerBtn');
         if (roiBtn && roiBtn.disabled) return;
         const isActive = viewer.ctViewer.toggleRoiMode();
+        const rulerActive = viewer.ctViewer.isRulerMode && viewer.ctViewer.isRulerMode();
 
         if (roiBtn) {
             if (isActive) {
                 roiBtn.classList.add('active');
-                roiBtn.title = 'Adjust contrast';
+                roiBtn.title = 'Adjust contrast (active)';
             } else {
                 roiBtn.classList.remove('active');
                 roiBtn.title = 'Adjust contrast';
+            }
+        }
+
+        if (rulerBtn) {
+            if (rulerActive) {
+                rulerBtn.classList.add('active');
+                rulerBtn.title = 'Ruler tool (M)';
+            } else {
+                rulerBtn.classList.remove('active');
+                rulerBtn.title = 'Ruler tool (M)';
             }
         }
     }
@@ -355,6 +379,36 @@ class ViewerControls {
 
         if (viewer.status && typeof viewer.status.refreshSliceIndicators === 'function') {
             viewer.status.refreshSliceIndicators();
+        }
+    }
+
+    toggleRulerMode() {
+        const viewer = this.viewer;
+        if (!viewer.ctViewer || typeof viewer.ctViewer.toggleRulerMode !== 'function') return;
+
+        const rulerBtn = document.getElementById('rulerBtn');
+        const roiBtn = document.getElementById('roiBtn');
+        if (rulerBtn && rulerBtn.disabled) return;
+
+        const isActive = viewer.ctViewer.toggleRulerMode();
+        const roiActive = viewer.ctViewer.isRoiMode && viewer.ctViewer.isRoiMode();
+
+        if (rulerBtn) {
+            if (isActive) {
+                rulerBtn.classList.add('active');
+            } else {
+                rulerBtn.classList.remove('active');
+            }
+            rulerBtn.title = 'Ruler tool (M)';
+        }
+
+        if (roiBtn) {
+            if (roiActive) {
+                roiBtn.classList.add('active');
+            } else {
+                roiBtn.classList.remove('active');
+            }
+            roiBtn.title = roiActive ? 'Adjust contrast (active)' : 'Adjust contrast';
         }
     }
 }
