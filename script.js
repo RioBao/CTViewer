@@ -98,10 +98,6 @@ class ImageViewer {
         return ext === 'json' || ext === 'dat' || ext === 'volumeinfo';
     }
 
-    hasAnyRawMetadata(files) {
-        return files.some((f) => this.isRawMetadataFile(f));
-    }
-
     tryMergeWithPendingRawSelection(fileArray) {
         if (!this.hasPendingRawSelection() || !Array.isArray(fileArray) || fileArray.length === 0) {
             return fileArray;
@@ -987,8 +983,6 @@ class ImageViewer {
                     alert('RAW file selected without metadata. Please select the matching .json, .raw.volumeinfo/.volumeinfo, or .dat file at the same time.');
                 } else if (hasRaw) {
                     alert('RAW file selected without matching metadata. Ensure the .json, .raw.volumeinfo/.volumeinfo, or .dat has the same base name and select both files together.');
-                } else if (this.hasPendingRawSelection() && this.hasAnyRawMetadata(fileArray)) {
-                    alert('Selected metadata could not be paired with the remembered RAW file. Please select RAW and metadata together once.');
                 } else {
                     alert('No valid files selected');
                 }
