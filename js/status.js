@@ -18,14 +18,7 @@ class ViewerStatus {
 
         document.addEventListener('slicechange', (e) => {
             const { axis, sliceIndex, totalSlices } = e.detail;
-            const indicator = axis === 'xy' ? viewer.sliceIndicatorXY :
-                            axis === 'xz' ? viewer.sliceIndicatorXZ :
-                            viewer.sliceIndicatorYZ;
-
-            if (indicator) {
-                const axisLabel = axis.toUpperCase();
-                indicator.textContent = `${axisLabel}: ${sliceIndex + 1}/${totalSlices}`;
-            }
+            this.setSliceIndicator(axis, sliceIndex, totalSlices);
         });
 
         document.addEventListener('zoomchange', (e) => {
@@ -42,10 +35,10 @@ class ViewerStatus {
         });
 
         document.addEventListener('crosshairchange', (e) => {
-            const { x, y, z, value } = e.detail;
+            const { value } = e.detail;
             if (viewer.pixelInfo) {
-                const gray = Number.isFinite(value) ? Math.round(value) : value;
-                viewer.pixelInfo.textContent = `X:${x},Y:${y},Z:${z}=${gray}`;
+                const gray = Number.isFinite(value) ? Math.round(value) : '--';
+                viewer.pixelInfo.textContent = `V=${gray}`;
             }
         });
     }
@@ -65,14 +58,37 @@ class ViewerStatus {
         }
 
         if (viewer.sliceIndicatorXY) {
-            viewer.sliceIndicatorXY.textContent = `XY: ${Math.floor(nz / 2) + 1}/${nz}`;
+            this.setSliceIndicator('xy', Math.floor(nz / 2), nz);
         }
         if (viewer.sliceIndicatorXZ) {
-            viewer.sliceIndicatorXZ.textContent = `XZ: ${Math.floor(ny / 2) + 1}/${ny}`;
+            this.setSliceIndicator('xz', Math.floor(ny / 2), ny);
         }
         if (viewer.sliceIndicatorYZ) {
-            viewer.sliceIndicatorYZ.textContent = `YZ: ${Math.floor(nx / 2) + 1}/${nx}`;
+            this.setSliceIndicator('yz', Math.floor(nx / 2), nx);
         }
+    }
+
+    setSliceIndicator(axis, sliceIndex, totalSlices) {
+        const viewer = this.viewer;
+        const indicator = axis === 'xy' ? viewer.sliceIndicatorXY :
+                        axis === 'xz' ? viewer.sliceIndicatorXZ :
+                        viewer.sliceIndicatorYZ;
+
+        if (!indicator || !Number.isFinite(totalSlices) || totalSlices <= 0) return;
+        const axisLabel = axis.toUpperCase();
+        const comma = viewer.ui && viewer.ui.crosshairEnabled ? ',' : '';
+        indicator.textContent = `${axisLabel}: ${sliceIndex + 1}/${totalSlices}${comma}`;
+    }
+
+    refreshSliceIndicators() {
+        const viewer = this.viewer;
+        if (!viewer.ctViewer || !viewer.ctViewer.volumeData) return;
+
+        const [nx, ny, nz] = viewer.ctViewer.volumeData.dimensions;
+        const slices = viewer.ctViewer.state.slices;
+        this.setSliceIndicator('xy', slices.xy, nz);
+        this.setSliceIndicator('xz', slices.xz, ny);
+        this.setSliceIndicator('yz', slices.yz, nx);
     }
 
     showLoadingIndicator(message) {

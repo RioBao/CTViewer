@@ -82,7 +82,7 @@ class VolumeRenderer3D {
         // Volume loaded flag
         this.volumeLoaded = false;
 
-        // Volume resolution overlay (shows when 3D uses low-res data)
+        // Legacy volume resolution overlay (replaced by in-viewport UI controls)
         this.volumeInfoOverlay = null;
         this.createVolumeInfoOverlay();
 
@@ -94,36 +94,15 @@ class VolumeRenderer3D {
      * Create a DOM overlay for showing volume resolution info
      */
     createVolumeInfoOverlay() {
-        const container = this.canvas.parentElement;
-        if (!container) return;
-
-        const overlay = document.createElement('div');
-        overlay.style.cssText =
-            'position:absolute;bottom:8px;right:8px;' +
-            'background:rgba(255,170,0,0.75);color:#000;' +
-            'font:bold 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
-            'padding:2px 6px;border-radius:4px;' +
-            'pointer-events:none;display:none;z-index:10;';
-        container.appendChild(overlay);
-        this.volumeInfoOverlay = overlay;
+        // Disabled: status is now rendered by the viewport control chip in script.js.
+        this.volumeInfoOverlay = null;
     }
 
     /**
      * Show or hide the volume resolution overlay
      */
     updateVolumeInfoOverlay() {
-        if (!this.volumeInfoOverlay || !this.volumeData) return;
-
-        const dims = this.volumeData.dimensions;
-        if (this.volumeData.isLowRes || this.volumeData.isEnhanced) {
-            const label = this.volumeData.isEnhanced ? 'MID RES' : 'LOW RES';
-            this.volumeInfoOverlay.textContent = `${label} \u00B7 ${dims[0]}\u00D7${dims[1]}\u00D7${dims[2]}`;
-            this.volumeInfoOverlay.style.display = 'block';
-            // Keep low-res warning styling for mid-res as well
-            this.volumeInfoOverlay.style.background = 'rgba(255, 170, 0, 0.75)';
-        } else {
-            this.volumeInfoOverlay.style.display = 'none';
-        }
+        // No-op: kept for compatibility with existing loadVolume flow.
     }
 
     /**

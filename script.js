@@ -5,6 +5,7 @@ class ImageViewer {
         this.histogram = null;
         this.cachedMid3DVolume = null;
         this.volumeState = this.createVolumeState();
+        this.ui = this.createUIState();
 
         this.initElements();
         this.status = new ViewerStatus(this);
@@ -20,6 +21,8 @@ class ImageViewer {
         this.initCTComponents();
         this.status.bind();
         this.controls.bind();
+        this.bindOverlayUI();
+        this.update3DStatusChip();
     }
 
     initElements() {
@@ -30,6 +33,21 @@ class ImageViewer {
         this.fileName = document.getElementById('fileName');
         this.imageInfo = document.getElementById('imageInfo');
         this.zoomLevel = document.getElementById('zoomLevel');
+
+        // Overlay UI elements
+        this.topOverlay = document.getElementById('topOverlay');
+        this.toolDock = document.getElementById('toolDock');
+        this.toolDockGrip = document.getElementById('toolDockGrip');
+        this.histogramOverlay = document.getElementById('histogramOverlay');
+        this.histogramGrip = document.getElementById('histogramGrip');
+        this.histogramToggleBtn = document.getElementById('histogramToggleBtn');
+        this.histogramCloseBtn = document.getElementById('histogramCloseBtn');
+        this.sliceControls = document.getElementById('sliceControls');
+
+        this.viewport3DControls = document.getElementById('viewport3DControls');
+        this.viewport3DChip = document.getElementById('viewport3DChip');
+        this.viewport3DPanel = document.getElementById('viewport3DPanel');
+        this.resolutionChipText = document.getElementById('resolutionChipText');
 
         // CT view elements
         this.ct3DView = document.getElementById('ct3DView');
@@ -55,7 +73,463 @@ class ImageViewer {
         // 3D resolution controls
         this.resolution3DSelect = document.getElementById('resolution3DSelect');
         this.resolution3DStatus = document.getElementById('resolution3DStatus');
+    }
 
+    createUIState() {
+        return {
+            histogramOpen: false,
+            crosshairEnabled: false,
+            threeDPanelOpen: false,
+            toolDockDragging: false,
+            toolDockStartX: 0,
+            toolDockStartY: 0,
+            toolDockStartLeft: 16,
+            toolDockStartTop: 80,
+            histogramDragging: false,
+            histogramStartX: 0,
+            histogramStartY: 0,
+            histogramStartLeft: 0,
+            histogramStartTop: 80,
+            topOverlayTimer: null,
+            threeDControlsTimer: null
+        };
+    }
+
+    bindOverlayUI() {
+        if (this.histogramToggleBtn) {
+            this.histogramToggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleHistogramOverlay();
+            });
+        }
+
+        if (this.histogramCloseBtn) {
+            this.histogramCloseBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.setHistogramOpen(false);
+            });
+        }
+
+        if (this.histogramOverlay) {
+            this.histogramOverlay.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+
+        if (this.viewport3DChip) {
+            this.viewport3DChip.addEventListener('mousedown', (e) => e.stopPropagation());
+            this.viewport3DChip.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggle3DPanel();
+            });
+        }
+
+        if (this.viewport3DPanel) {
+            this.viewport3DPanel.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+
+        document.addEventListener('mousedown', (e) => {
+            const target = e.target;
+            if (this.ui.histogramOpen &&
+                this.histogramOverlay &&
+                !this.histogramOverlay.contains(target) &&
+                this.histogramToggleBtn &&
+                !this.histogramToggleBtn.contains(target)) {
+                this.setHistogramOpen(false);
+            }
+
+            if (this.ui.threeDPanelOpen &&
+                this.viewport3DControls &&
+                !this.viewport3DControls.contains(target)) {
+                this.set3DPanelOpen(false);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            if (this.ui.histogramOpen) {
+                this.refreshHistogramOverlay();
+            }
+            this.clampToolDockPosition();
+            this.clampHistogramPosition();
+            this.update3DStatusChip();
+        });
+
+        this.bindTopOverlayBehavior();
+        this.bind3DOverlayBehavior();
+        this.bindToolDockDrag();
+        this.bindHistogramDrag();
+        this.setHistogramOpen(false);
+        this.set3DPanelOpen(false);
+    }
+
+    bindTopOverlayBehavior() {
+        if (!this.topOverlay) return;
+
+        const showTopOverlay = () => {
+            this.topOverlay.classList.add('reveal');
+            if (this.ui.topOverlayTimer) {
+                clearTimeout(this.ui.topOverlayTimer);
+            }
+            this.ui.topOverlayTimer = setTimeout(() => {
+                if (!this.topOverlay.matches(':hover')) {
+                    this.topOverlay.classList.remove('reveal');
+                }
+            }, 1500);
+        };
+
+        document.addEventListener('mousemove', (e) => {
+            if (e.clientY <= 72) {
+                showTopOverlay();
+            }
+        });
+
+        this.topOverlay.addEventListener('mouseenter', () => {
+            this.topOverlay.classList.add('reveal');
+            if (this.ui.topOverlayTimer) {
+                clearTimeout(this.ui.topOverlayTimer);
+            }
+        });
+
+        this.topOverlay.addEventListener('mouseleave', () => {
+            if (this.ui.topOverlayTimer) {
+                clearTimeout(this.ui.topOverlayTimer);
+            }
+            this.ui.topOverlayTimer = setTimeout(() => {
+                this.topOverlay.classList.remove('reveal');
+            }, 700);
+        });
+
+        showTopOverlay();
+    }
+
+    bind3DOverlayBehavior() {
+        if (!this.canvas3D || !this.viewport3DControls) return;
+
+        const viewport3DContainer = this.canvas3D.parentElement;
+        if (!viewport3DContainer) return;
+
+        const activateControls = () => {
+            this.set3DControlsActive(true);
+            this.schedule3DControlsFade();
+        };
+
+        viewport3DContainer.addEventListener('mouseenter', activateControls);
+        viewport3DContainer.addEventListener('mousemove', activateControls);
+        viewport3DContainer.addEventListener('mouseleave', () => {
+            if (!this.ui.threeDPanelOpen) {
+                this.set3DControlsActive(false);
+            }
+        });
+
+        this.viewport3DControls.addEventListener('mouseenter', () => {
+            this.set3DControlsActive(true);
+        });
+
+        this.viewport3DControls.addEventListener('mouseleave', () => {
+            if (!this.ui.threeDPanelOpen) {
+                this.schedule3DControlsFade();
+            }
+        });
+    }
+
+    bindToolDockDrag() {
+        if (!this.toolDock || !this.toolDockGrip || !this.dropZone) return;
+
+        let savedLeft = NaN;
+        let savedTop = NaN;
+        try {
+            savedLeft = parseInt(localStorage.getItem('viewer.toolDock.left') || '', 10);
+            savedTop = parseInt(localStorage.getItem('viewer.toolDock.top') || '', 10);
+        } catch (error) {
+            // Ignore storage read failures.
+        }
+        if (Number.isFinite(savedLeft) && Number.isFinite(savedTop)) {
+            this.setToolDockPosition(savedLeft, savedTop, false);
+        } else {
+            this.clampToolDockPosition();
+        }
+
+        const onPointerMove = (e) => {
+            if (!this.ui.toolDockDragging) return;
+            e.preventDefault();
+            const nextLeft = this.ui.toolDockStartLeft + (e.clientX - this.ui.toolDockStartX);
+            const nextTop = this.ui.toolDockStartTop + (e.clientY - this.ui.toolDockStartY);
+            this.setToolDockPosition(nextLeft, nextTop, false);
+        };
+
+        const onPointerUp = () => {
+            if (!this.ui.toolDockDragging) return;
+            this.ui.toolDockDragging = false;
+            this.toolDock.classList.remove('dragging');
+            this.persistToolDockPosition();
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+        };
+
+        this.toolDockGrip.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const containerRect = this.dropZone.getBoundingClientRect();
+            const dockRect = this.toolDock.getBoundingClientRect();
+            this.ui.toolDockDragging = true;
+            this.ui.toolDockStartX = e.clientX;
+            this.ui.toolDockStartY = e.clientY;
+            this.ui.toolDockStartLeft = dockRect.left - containerRect.left;
+            this.ui.toolDockStartTop = dockRect.top - containerRect.top;
+
+            this.toolDock.classList.add('dragging');
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
+        });
+    }
+
+    setToolDockPosition(left, top, persist = true) {
+        if (!this.toolDock || !this.dropZone) return;
+
+        const containerRect = this.dropZone.getBoundingClientRect();
+        const dockRect = this.toolDock.getBoundingClientRect();
+        const maxLeft = Math.max(8, containerRect.width - dockRect.width - 8);
+        const maxTop = Math.max(56, containerRect.height - dockRect.height - 8);
+
+        const clampedLeft = Math.max(8, Math.min(maxLeft, left));
+        const clampedTop = Math.max(56, Math.min(maxTop, top));
+
+        this.toolDock.style.left = `${Math.round(clampedLeft)}px`;
+        this.toolDock.style.top = `${Math.round(clampedTop)}px`;
+
+        if (persist) {
+            this.persistToolDockPosition();
+        }
+    }
+
+    clampToolDockPosition() {
+        if (!this.toolDock) return;
+
+        const left = parseFloat(this.toolDock.style.left || '16');
+        const top = parseFloat(this.toolDock.style.top || '80');
+        this.setToolDockPosition(left, top, false);
+    }
+
+    persistToolDockPosition() {
+        if (!this.toolDock) return;
+        try {
+            localStorage.setItem('viewer.toolDock.left', `${Math.round(parseFloat(this.toolDock.style.left || '16'))}`);
+            localStorage.setItem('viewer.toolDock.top', `${Math.round(parseFloat(this.toolDock.style.top || '80'))}`);
+        } catch (error) {
+            // Persistence is optional; ignore storage failures.
+        }
+    }
+
+    bindHistogramDrag() {
+        if (!this.histogramOverlay || !this.histogramGrip || !this.dropZone) return;
+
+        let savedLeft = NaN;
+        let savedTop = NaN;
+        try {
+            savedLeft = parseInt(localStorage.getItem('viewer.histogram.left') || '', 10);
+            savedTop = parseInt(localStorage.getItem('viewer.histogram.top') || '', 10);
+        } catch (error) {
+            // Ignore storage read failures.
+        }
+
+        if (Number.isFinite(savedLeft) && Number.isFinite(savedTop)) {
+            this.setHistogramOverlayPosition(savedLeft, savedTop, false);
+        }
+
+        const onPointerMove = (e) => {
+            if (!this.ui.histogramDragging) return;
+            e.preventDefault();
+            const nextLeft = this.ui.histogramStartLeft + (e.clientX - this.ui.histogramStartX);
+            const nextTop = this.ui.histogramStartTop + (e.clientY - this.ui.histogramStartY);
+            this.setHistogramOverlayPosition(nextLeft, nextTop, false);
+        };
+
+        const onPointerUp = () => {
+            if (!this.ui.histogramDragging) return;
+            this.ui.histogramDragging = false;
+            this.histogramOverlay.classList.remove('dragging');
+            this.persistHistogramOverlayPosition();
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+        };
+
+        this.histogramGrip.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const containerRect = this.dropZone.getBoundingClientRect();
+            const overlayRect = this.histogramOverlay.getBoundingClientRect();
+            this.ui.histogramDragging = true;
+            this.ui.histogramStartX = e.clientX;
+            this.ui.histogramStartY = e.clientY;
+            this.ui.histogramStartLeft = overlayRect.left - containerRect.left;
+            this.ui.histogramStartTop = overlayRect.top - containerRect.top;
+
+            this.histogramOverlay.classList.add('dragging');
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
+        });
+    }
+
+    setHistogramOverlayPosition(left, top, persist = true) {
+        if (!this.histogramOverlay || !this.dropZone) return;
+
+        const containerRect = this.dropZone.getBoundingClientRect();
+        const panelWidth = this.histogramOverlay.offsetWidth || 260;
+        const panelHeight = this.histogramOverlay.offsetHeight || 170;
+        const maxLeft = Math.max(8, containerRect.width - panelWidth - 8);
+        const maxTop = Math.max(56, containerRect.height - panelHeight - 8);
+
+        const clampedLeft = Math.max(8, Math.min(maxLeft, left));
+        const clampedTop = Math.max(56, Math.min(maxTop, top));
+
+        this.histogramOverlay.style.left = `${Math.round(clampedLeft)}px`;
+        this.histogramOverlay.style.top = `${Math.round(clampedTop)}px`;
+        this.histogramOverlay.style.right = 'auto';
+
+        if (persist) {
+            this.persistHistogramOverlayPosition();
+        }
+    }
+
+    clampHistogramPosition() {
+        if (!this.histogramOverlay) return;
+        if (!this.histogramOverlay.style.left) return;
+
+        const left = parseFloat(this.histogramOverlay.style.left || '0');
+        const top = parseFloat(this.histogramOverlay.style.top || '80');
+        this.setHistogramOverlayPosition(left, top, false);
+    }
+
+    persistHistogramOverlayPosition() {
+        if (!this.histogramOverlay || !this.histogramOverlay.style.left) return;
+        try {
+            localStorage.setItem('viewer.histogram.left', `${Math.round(parseFloat(this.histogramOverlay.style.left || '0'))}`);
+            localStorage.setItem('viewer.histogram.top', `${Math.round(parseFloat(this.histogramOverlay.style.top || '80'))}`);
+        } catch (error) {
+            // Persistence is optional; ignore storage failures.
+        }
+    }
+
+    set3DControlsActive(active) {
+        if (!this.viewport3DControls) return;
+        this.viewport3DControls.classList.toggle('active', !!active);
+    }
+
+    schedule3DControlsFade() {
+        if (this.ui.threeDControlsTimer) {
+            clearTimeout(this.ui.threeDControlsTimer);
+        }
+
+        this.ui.threeDControlsTimer = setTimeout(() => {
+            if (!this.ui.threeDPanelOpen) {
+                this.set3DControlsActive(false);
+            }
+        }, 2000);
+    }
+
+    set3DPanelOpen(open) {
+        this.ui.threeDPanelOpen = !!open;
+
+        if (this.viewport3DControls) {
+            this.viewport3DControls.classList.toggle('expanded', this.ui.threeDPanelOpen);
+        }
+
+        if (this.viewport3DPanel) {
+            this.viewport3DPanel.setAttribute('aria-hidden', this.ui.threeDPanelOpen ? 'false' : 'true');
+        }
+
+        this.set3DControlsActive(true);
+        if (!this.ui.threeDPanelOpen) {
+            this.schedule3DControlsFade();
+        }
+    }
+
+    toggle3DPanel(forceOpen = null) {
+        const next = forceOpen === null ? !this.ui.threeDPanelOpen : !!forceOpen;
+        this.set3DPanelOpen(next);
+    }
+
+    setHistogramOpen(open) {
+        this.ui.histogramOpen = !!open;
+
+        if (this.histogramOverlay) {
+            this.histogramOverlay.classList.toggle('open', this.ui.histogramOpen);
+            this.histogramOverlay.setAttribute('aria-hidden', this.ui.histogramOpen ? 'false' : 'true');
+        }
+
+        if (this.histogramToggleBtn) {
+            this.histogramToggleBtn.classList.toggle('active', this.ui.histogramOpen);
+        }
+
+        if (this.ui.histogramOpen) {
+            this.clampHistogramPosition();
+            this.refreshHistogramOverlay();
+        }
+    }
+
+    toggleHistogramOverlay(forceOpen = null) {
+        const next = forceOpen === null ? !this.ui.histogramOpen : !!forceOpen;
+        this.setHistogramOpen(next);
+    }
+
+    refreshHistogramOverlay() {
+        if (!this.histogram) return;
+        requestAnimationFrame(() => {
+            this.histogram.setupCanvas();
+            this.histogram.render();
+            this.histogram.updateHandles();
+            this.histogram.updateLabels();
+        });
+    }
+
+    closeTransientOverlays() {
+        let closed = false;
+
+        if (this.ui.histogramOpen) {
+            this.setHistogramOpen(false);
+            closed = true;
+        }
+
+        if (this.ui.threeDPanelOpen) {
+            this.set3DPanelOpen(false);
+            closed = true;
+        }
+
+        return closed;
+    }
+
+    update3DStatusChip() {
+        if (!this.resolutionChipText) return;
+
+        let label = '--';
+        if (this.resolution3DSelect) {
+            const selected = this.resolution3DSelect.options[this.resolution3DSelect.selectedIndex];
+            if (selected) {
+                label = selected.textContent.split('(')[0].trim();
+            }
+        }
+
+        const renderer3D = this.ctViewer && this.ctViewer.renderer3D ? this.ctViewer.renderer3D : null;
+        const loadedVolume = renderer3D && renderer3D.volumeData ? renderer3D.volumeData : null;
+        const dims = loadedVolume && loadedVolume.dimensions
+            ? loadedVolume.dimensions
+            : (this.volumeState && this.volumeState.dimensions);
+
+        const dimsText = dims ? `${dims[0]}x${dims[1]}x${dims[2]}` : '--';
+        this.resolutionChipText.textContent = `Resolution: ${label} - ${dimsText}`;
+
+        const isLowOrMid = !!(loadedVolume && (loadedVolume.isLowRes || loadedVolume.isEnhanced));
+        if (this.viewport3DChip) {
+            this.viewport3DChip.classList.toggle('alert', isLowOrMid);
+        }
     }
 
     async handleFiles(files) {
@@ -147,7 +621,6 @@ class ImageViewer {
                 }
             }
         };
-
     }
 
     createVolumeState() {
@@ -167,6 +640,7 @@ class ImageViewer {
 
     updateVolumeState(patch) {
         this.volumeState = { ...this.volumeState, ...patch };
+        this.update3DStatusChip();
     }
 
     reset3DResolutionCache() {
@@ -275,6 +749,8 @@ class ImageViewer {
         if (this.resolution3DStatus) {
             this.resolution3DStatus.textContent = '';
         }
+
+        this.update3DStatusChip();
     }
 
     async set3DResolution(value) {
@@ -289,12 +765,14 @@ class ImageViewer {
             if (lowVolume) {
                 this.ctViewer.renderer3D.loadVolume(lowVolume);
             }
+            this.update3DStatusChip();
             return;
         }
 
         if (value === 'mid') {
             if (this.cachedMid3DVolume) {
                 this.ctViewer.renderer3D.loadVolume(this.cachedMid3DVolume);
+                this.update3DStatusChip();
                 return;
             }
 
@@ -327,6 +805,8 @@ class ImageViewer {
             } else if (this.resolution3DStatus) {
                 this.resolution3DStatus.textContent = 'Failed';
             }
+
+            this.update3DStatusChip();
             return;
         }
 
@@ -343,6 +823,8 @@ class ImageViewer {
                 this.ctViewer.renderer3D.loadVolume(fullVolume);
             }
         }
+
+        this.update3DStatusChip();
     }
 
     async load2DImage(fileGroup) {
@@ -382,7 +864,6 @@ class ImageViewer {
             });
 
             this.status.hideLoadingIndicator();
-
         } catch (error) {
             this.status.hideLoadingIndicator();
             throw error;
@@ -404,16 +885,17 @@ class ImageViewer {
                 const width = canvas.width;
                 const height = canvas.height;
 
-                // Check if grayscale (R≈G≈B for all pixels, sample first 100)
+                // Check if grayscale (R~G~B for all pixels, sample first 100)
                 let isGrayscale = true;
                 for (let i = 0; i < Math.min(pixels.length, 400); i += 4) {
-                    if (Math.abs(pixels[i] - pixels[i+1]) > 5 || Math.abs(pixels[i+1] - pixels[i+2]) > 5) {
+                    if (Math.abs(pixels[i] - pixels[i + 1]) > 5 || Math.abs(pixels[i + 1] - pixels[i + 2]) > 5) {
                         isGrayscale = false;
                         break;
                     }
                 }
 
-                let arrayBuffer, metadata;
+                let arrayBuffer;
+                let metadata;
 
                 if (isGrayscale) {
                     // Grayscale - single channel
@@ -433,9 +915,9 @@ class ImageViewer {
                     const data = new Uint8Array(width * height * 3);
                     const sliceSize = width * height;
                     for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
-                        data[j] = pixels[i];                    // R channel
-                        data[j + sliceSize] = pixels[i + 1];    // G channel
-                        data[j + sliceSize * 2] = pixels[i + 2]; // B channel
+                        data[j] = pixels[i];
+                        data[j + sliceSize] = pixels[i + 1];
+                        data[j + sliceSize * 2] = pixels[i + 2];
                     }
                     arrayBuffer = data.buffer;
                     metadata = {
@@ -464,31 +946,42 @@ class ImageViewer {
         if (this.placeholder) this.placeholder.style.display = 'none';
         if (this.ct3DView) this.ct3DView.style.display = 'grid';
 
-        // Show slice controls and 3D quality
-        const sliceControls = document.getElementById('sliceControls');
-        if (sliceControls) sliceControls.style.display = 'block';
-
-        const quality3DGroup = document.getElementById('quality3DGroup');
-        if (quality3DGroup) quality3DGroup.style.display = 'block';
+        if (this.sliceControls) {
+            this.sliceControls.classList.add('visible');
+        }
 
         // Enable ROI and crosshair buttons
         const roiBtn = document.getElementById('roiBtn');
-        roiBtn.disabled = false;
-        roiBtn.classList.remove('active');
+        if (roiBtn) {
+            roiBtn.disabled = false;
+            roiBtn.classList.remove('active');
+        }
 
         const crosshairBtn = document.getElementById('crosshairBtn');
-        crosshairBtn.disabled = false;
+        if (crosshairBtn) {
+            crosshairBtn.disabled = false;
+        }
 
         // Set crosshair state based on CTViewer
         if (this.ctViewer && this.ctViewer.isCrosshairEnabled()) {
-            crosshairBtn.classList.add('active');
-            this.pixelInfoGroup.style.display = 'block';
+            this.ui.crosshairEnabled = true;
+            if (crosshairBtn) crosshairBtn.classList.add('active');
+            if (this.pixelInfoGroup) {
+                this.pixelInfoGroup.style.display = 'inline-flex';
+            }
         } else {
-            crosshairBtn.classList.remove('active');
-            this.pixelInfoGroup.style.display = 'none';
+            this.ui.crosshairEnabled = false;
+            if (crosshairBtn) crosshairBtn.classList.remove('active');
+            if (this.pixelInfoGroup) {
+                this.pixelInfoGroup.style.display = 'none';
+            }
         }
-    }
 
+        if (this.status && typeof this.status.refreshSliceIndicators === 'function') {
+            this.status.refreshSliceIndicators();
+        }
+        this.update3DStatusChip();
+    }
 }
 
 // Initialize the viewer

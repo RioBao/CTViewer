@@ -9,17 +9,26 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Industrial CT Viewer</h1>
-            <div class="controls">
-                <button id="openBtn" title="Open Images (O)">📁 Open</button>
-                <button id="resetBtn" title="Reset View (R)">↺ Reset</button>
-                <button id="fullscreenBtn" title="Fullscreen (F)">⛶ Fullscreen</button>
-            </div>
-        </header>
-
         <div class="main-content">
             <div class="viewer-container" id="dropZone">
+                <div class="top-overlay" id="topOverlay">
+                    <div class="top-chip app-chip">Industrial CT Viewer</div>
+                    <div class="top-chip top-actions">
+                        <button id="openBtn" class="icon-btn" title="Open Images (O)">Open</button>
+                        <button id="resetBtn" class="icon-btn" title="Reset View (R)">Reset</button>
+                        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen (F)">Full</button>
+                    </div>
+                </div>
+
+                <div class="tool-dock" id="toolDock">
+                    <div class="dock-grip" id="toolDockGrip" title="Drag tool dock">::</div>
+                    <button id="zoomInBtn" class="dock-btn" title="Zoom In (+)">+</button>
+                    <button id="zoomOutBtn" class="dock-btn" title="Zoom Out (-)">-</button>
+                    <button id="crosshairBtn" class="dock-btn" title="Toggle crosshairs (C)" disabled>C</button>
+                    <button id="histogramToggleBtn" class="dock-btn" title="Toggle histogram (H)">H</button>
+                    <button id="roiBtn" class="dock-btn" title="Set range from region (Esc to cancel)" disabled data-icon="roi"></button>
+                </div>
+
                 <div class="image-wrapper" id="imageWrapper">
                     <!-- Placeholder shown when no volume loaded -->
                     <div class="placeholder" id="placeholder">
@@ -29,84 +38,76 @@
 
                     <!-- Volume viewer (2x2 grid for 3D, single view for 2D) -->
                     <div id="ct3DView" class="ct-view" style="display: none;">
-                        <div class="viewport-container">
+                        <div class="viewport-container" data-axis="xy">
                             <canvas id="canvasXY" class="viewport-canvas"></canvas>
                         </div>
-                        <div class="viewport-container">
+                        <div class="viewport-container" data-axis="xz">
                             <canvas id="canvasXZ" class="viewport-canvas"></canvas>
                         </div>
-                        <div class="viewport-container">
+                        <div class="viewport-container" data-axis="yz">
                             <canvas id="canvasYZ" class="viewport-canvas"></canvas>
                         </div>
-                        <div class="viewport-container viewport-3d">
+                        <div class="viewport-container viewport-3d" data-axis="3d">
                             <canvas id="canvas3D" class="viewport-canvas"></canvas>
+                            <div class="viewport-3d-controls" id="viewport3DControls">
+                                <button id="viewport3DChip" class="viewport-3d-chip" title="3D rendering controls">
+                                    <span id="resolutionChipText">Resolution: --</span>
+                                    <span id="resolution3DStatus" class="status-text"></span>
+                                </button>
+                                <div class="viewport-3d-panel" id="viewport3DPanel" aria-hidden="true">
+                                    <div class="control-row">
+                                        <label for="resolution3DSelect">Resolution</label>
+                                        <select id="resolution3DSelect">
+                                            <option value="low">Low</option>
+                                            <option value="mid" disabled>Mid</option>
+                                            <option value="full" disabled>Full</option>
+                                        </select>
+                                    </div>
+                                    <div class="control-row">
+                                        <label for="quality3DSelect">Quality</label>
+                                        <select id="quality3DSelect">
+                                            <option value="low" selected>Low</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="high">High</option>
+                                        </select>
+                                    </div>
+                                    <div class="control-row">
+                                        <label for="gamma3DSlider">Gamma <span id="gamma3DValue">1.0</span></label>
+                                        <input type="range" id="gamma3DSlider" min="0.1" max="4" step="0.1" value="1">
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            <div class="sidebar" id="ctControls">
-                <div class="sidebar-section" id="histogramGroup">
-                    <h4>Histogram</h4>
-                    <div class="histogram-container">
-                        <canvas id="histogramCanvas" width="220" height="100"></canvas>
-                        <div class="histogram-handles">
-                            <div class="handle handle-min" id="handleMin"></div>
-                            <div class="handle handle-max" id="handleMax"></div>
+                    <div class="histogram-overlay" id="histogramOverlay" aria-hidden="true">
+                        <div class="overlay-title-row">
+                            <div class="overlay-title-left">
+                                <div class="overlay-grip" id="histogramGrip" title="Drag histogram panel">::</div>
+                                <h4>Histogram</h4>
+                            </div>
+                            <button id="histogramCloseBtn" class="icon-btn close-btn" title="Close histogram (Esc)">X</button>
+                        </div>
+                        <div class="histogram-container">
+                            <canvas id="histogramCanvas" width="220" height="100"></canvas>
+                            <div class="histogram-handles">
+                                <div class="handle handle-min" id="handleMin"></div>
+                                <div class="handle handle-max" id="handleMax"></div>
+                            </div>
+                        </div>
+                        <div class="histogram-values">
+                            <span id="histogramMin">0</span>
+                            <span id="histogramMax">255</span>
                         </div>
                     </div>
-                    <div class="histogram-values">
-                        <span id="histogramMin">0</span>
-                        <span id="histogramMax">255</span>
-                    </div>
-                </div>
 
-                <div class="sidebar-section" id="toolControls">
-                    <h4>Tools</h4>
-                    <div class="tool-buttons">
-                        <button id="zoomInBtn" title="Zoom In (+)" class="tool-button">🔍+</button>
-                        <button id="zoomOutBtn" title="Zoom Out (-)" class="tool-button">🔍-</button>
-                        <button id="roiBtn" title="Set range from region (Esc to cancel)" disabled class="tool-button" data-icon="roi"></button>
-                        <button id="crosshairBtn" title="Toggle crosshairs (C)" disabled class="tool-button">✛</button>
-                    </div>
-                </div>
-
-                <div class="sidebar-section" id="sliceControls">
-                    <h4>Slices</h4>
-                    <div class="slice-indicators">
+                    <div class="slice-overlay" id="sliceControls">
                         <span id="sliceIndicatorXY" class="slice-indicator">XY: 0/0</span>
                         <span id="sliceIndicatorXZ" class="slice-indicator">XZ: 0/0</span>
                         <span id="sliceIndicatorYZ" class="slice-indicator">YZ: 0/0</span>
-                    </div>
-                </div>
-
-                <div class="sidebar-section" id="pixelInfoGroup" style="display: none;">
-                    <h4>Pixel Value</h4>
-                    <span id="pixelInfo" class="slice-indicator">X: 0, Y: 0, Z: 0 = 0</span>
-                </div>
-
-                <div class="sidebar-section" id="quality3DGroup">
-                    <h4>3D Rendering</h4>
-                    <div class="control-row">
-                        <label for="resolution3DSelect">3D Resolution</label>
-                        <select id="resolution3DSelect">
-                            <option value="low">Low</option>
-                            <option value="mid" disabled>Mid</option>
-                            <option value="full" disabled>Full</option>
-                        </select>
-                        <span id="resolution3DStatus" class="status-text"></span>
-                    </div>
-                    <div class="control-row">
-                        <label for="quality3DSelect">Quality</label>
-                        <select id="quality3DSelect">
-                            <option value="low" selected>Low (Fast)</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High (Slow)</option>
-                        </select>
-                    </div>
-                    <div class="control-row">
-                        <label for="gamma3DSlider">Gamma <span id="gamma3DValue">1.0</span></label>
-                        <input type="range" id="gamma3DSlider" min="0.1" max="4" step="0.1" value="1">
+                        <span id="pixelInfoGroup" class="slice-indicator slice-value" style="display: none;">
+                            <span id="pixelInfo">V=0</span>
+                        </span>
                     </div>
                 </div>
             </div>

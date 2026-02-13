@@ -6,15 +6,27 @@ class ViewerControls {
     bind() {
         const viewer = this.viewer;
 
-        document.getElementById('openBtn').addEventListener('click', () => viewer.fileInput.click());
-        document.getElementById('zoomInBtn').addEventListener('click', () => this.zoomIn());
-        document.getElementById('zoomOutBtn').addEventListener('click', () => this.zoomOut());
-        document.getElementById('resetBtn').addEventListener('click', () => this.resetView());
-        document.getElementById('fullscreenBtn').addEventListener('click', () => this.toggleFullscreen());
-        document.getElementById('roiBtn').addEventListener('click', () => this.toggleRoiMode());
-        document.getElementById('crosshairBtn').addEventListener('click', () => this.toggleCrosshairs());
+        const openBtn = document.getElementById('openBtn');
+        const zoomInBtn = document.getElementById('zoomInBtn');
+        const zoomOutBtn = document.getElementById('zoomOutBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const roiBtn = document.getElementById('roiBtn');
+        const crosshairBtn = document.getElementById('crosshairBtn');
 
-        viewer.fileInput.addEventListener('change', (e) => viewer.handleFiles(e.target.files));
+        if (openBtn) openBtn.addEventListener('click', () => viewer.fileInput.click());
+        if (zoomInBtn) zoomInBtn.addEventListener('click', () => this.zoomIn());
+        if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => this.zoomOut());
+        if (resetBtn) resetBtn.addEventListener('click', () => this.resetView());
+        if (fullscreenBtn) fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+        if (roiBtn) roiBtn.addEventListener('click', () => this.toggleRoiMode());
+        if (crosshairBtn) crosshairBtn.addEventListener('click', () => this.toggleCrosshairs());
+
+        viewer.fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                viewer.handleFiles(e.target.files);
+            }
+        });
 
         viewer.dropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
         viewer.dropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
@@ -30,6 +42,7 @@ class ViewerControls {
             quality3DSelect.addEventListener('change', (e) => {
                 if (viewer.ctViewer && viewer.ctViewer.renderer3D) {
                     viewer.ctViewer.renderer3D.setQuality(e.target.value);
+                    viewer.update3DStatusChip();
                 }
             });
         }
@@ -62,7 +75,9 @@ class ViewerControls {
             return;
         }
 
-        switch (e.key) {
+        const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+        switch (key) {
             case '+':
             case '=':
                 e.preventDefault();
@@ -76,6 +91,12 @@ class ViewerControls {
                 if (!e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
                     this.resetView();
+                }
+                break;
+            case 'h':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.toggleHistogram();
                 }
                 break;
             case 'c':
@@ -148,11 +169,20 @@ class ViewerControls {
                     this.navigateToSliceEdge(viewer.ctViewer.state.activeView, 'last');
                 }
                 break;
-            case 'Escape':
+            case 'Escape': {
+                let handled = false;
+                if (viewer.closeTransientOverlays && viewer.closeTransientOverlays()) {
+                    handled = true;
+                }
                 if (viewer.ctViewer && viewer.ctViewer.isRoiMode()) {
                     this.toggleRoiMode();
+                    handled = true;
+                }
+                if (handled) {
+                    e.preventDefault();
                 }
                 break;
+            }
         }
     }
 
@@ -214,6 +244,7 @@ class ViewerControls {
 
     handleDragOver(e) {
         const viewer = this.viewer;
+        if (!this.isFileDrag(e)) return;
         e.preventDefault();
         viewer.dropZone.classList.add('drag-over');
     }
@@ -227,10 +258,18 @@ class ViewerControls {
 
     handleDrop(e) {
         const viewer = this.viewer;
+        if (!this.isFileDrag(e)) return;
         e.preventDefault();
         viewer.dropZone.classList.remove('drag-over');
         const files = e.dataTransfer.files;
-        viewer.handleFiles(files);
+        if (files && files.length > 0) {
+            viewer.handleFiles(files);
+        }
+    }
+
+    isFileDrag(e) {
+        if (!e || !e.dataTransfer || !e.dataTransfer.types) return false;
+        return Array.from(e.dataTransfer.types).includes('Files');
     }
 
     toggleFullscreen() {
@@ -241,19 +280,29 @@ class ViewerControls {
         }
     }
 
+    toggleHistogram() {
+        const viewer = this.viewer;
+        if (viewer && typeof viewer.toggleHistogramOverlay === 'function') {
+            viewer.toggleHistogramOverlay();
+        }
+    }
+
     toggleRoiMode() {
         const viewer = this.viewer;
         if (!viewer.ctViewer) return;
 
         const roiBtn = document.getElementById('roiBtn');
+        if (roiBtn && roiBtn.disabled) return;
         const isActive = viewer.ctViewer.toggleRoiMode();
 
-        if (isActive) {
-            roiBtn.classList.add('active');
-            roiBtn.title = 'ROI mode active - draw rectangle to set range';
-        } else {
-            roiBtn.classList.remove('active');
-            roiBtn.title = 'Set range from region';
+        if (roiBtn) {
+            if (isActive) {
+                roiBtn.classList.add('active');
+                roiBtn.title = 'ROI mode active - draw rectangle to set range';
+            } else {
+                roiBtn.classList.remove('active');
+                roiBtn.title = 'Set range from region';
+            }
         }
     }
 
@@ -262,17 +311,31 @@ class ViewerControls {
         if (!viewer.ctViewer) return;
 
         const crosshairBtn = document.getElementById('crosshairBtn');
+        if (crosshairBtn && crosshairBtn.disabled) return;
         const isEnabled = viewer.ctViewer.toggleCrosshairs();
+        viewer.ui.crosshairEnabled = isEnabled;
 
         if (isEnabled) {
-            crosshairBtn.classList.add('active');
-            crosshairBtn.title = 'Crosshairs visible - click to hide';
-            viewer.pixelInfoGroup.style.display = 'block';
+            if (crosshairBtn) {
+                crosshairBtn.classList.add('active');
+                crosshairBtn.title = 'Crosshairs visible - click to hide';
+            }
+            if (viewer.pixelInfoGroup) {
+                viewer.pixelInfoGroup.style.display = 'inline-flex';
+            }
             viewer.ctViewer.notifyCrosshairChange();
         } else {
-            crosshairBtn.classList.remove('active');
-            crosshairBtn.title = 'Crosshairs hidden - click to show';
-            viewer.pixelInfoGroup.style.display = 'none';
+            if (crosshairBtn) {
+                crosshairBtn.classList.remove('active');
+                crosshairBtn.title = 'Crosshairs hidden - click to show';
+            }
+            if (viewer.pixelInfoGroup) {
+                viewer.pixelInfoGroup.style.display = 'none';
+            }
+        }
+
+        if (viewer.status && typeof viewer.status.refreshSliceIndicators === 'function') {
+            viewer.status.refreshSliceIndicators();
         }
     }
 }
