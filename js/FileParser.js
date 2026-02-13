@@ -153,17 +153,14 @@ class FileParser {
         });
 
         // Second pass: process remaining files
+        const tiffFiles = [];
         fileArray.forEach(file => {
             if (processedFiles.has(file)) return;
 
             const ext = this.getFileExtension(file.name).toLowerCase();
 
             if (this.isTiffExt(ext)) {
-                groups.push({
-                    type: 'tiff',
-                    file: file,
-                    name: file.name
-                });
+                tiffFiles.push(file);
             } else if (this.supportedImageFormats.includes(ext)) {
                 groups.push({
                     type: '2d-image',
@@ -172,6 +169,21 @@ class FileParser {
                 });
             }
         });
+
+        if (tiffFiles.length > 0) {
+            const sortedTiffFiles = tiffFiles
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+            groups.push({
+                type: 'tiff',
+                file: sortedTiffFiles[0],
+                files: sortedTiffFiles,
+                name: sortedTiffFiles.length === 1
+                    ? sortedTiffFiles[0].name
+                    : `TIFF Stack (${sortedTiffFiles.length} files)`
+            });
+        }
 
         return groups;
     }
@@ -540,6 +552,40 @@ class FileParser {
     }
 
     /**
+     * Read a full file as ArrayBuffer with optional progress callback.
+     * @param {File|Blob} file
+     * @param {(fraction:number)=>void} onProgress
+     * @returns {Promise<ArrayBuffer>}
+     */
+    readFileAsArrayBufferWithProgress(file, onProgress = null) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                if (onProgress) onProgress(1);
+                resolve(e.target.result);
+            };
+
+            reader.onprogress = (e) => {
+                if (!onProgress || !e.lengthComputable) return;
+                const fraction = e.total > 0 ? (e.loaded / e.total) : 0;
+                onProgress(Math.max(0, Math.min(1, fraction)));
+            };
+
+            reader.onerror = () => {
+                const error = reader.error;
+                reject(new Error(`Failed to read file: ${error ? error.message : 'Unknown error'}`));
+            };
+
+            reader.onabort = () => {
+                reject(new Error('File read was aborted'));
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    /**
      * Load and parse a 3D volume (RAW + JSON, volumeinfo, or DAT)
      * @param {File} rawFile
      * @param {File} jsonFile - JSON metadata file (optional if other metadata provided)
@@ -638,68 +684,919 @@ class FileParser {
     }
 
     /**
-     * Load TIFF file (placeholder - requires tiff.js library)
+     * Load a TIFF file and extract all pages.
      * @param {File} file
      * @returns {Promise<object>}
      */
-    async loadTIFF(file) {
-        // Check if tiff.js is loaded
+    async loadTIFF(file, readProgressCallback = null) {
         if (typeof Tiff === 'undefined') {
             throw new Error('TIFF library not loaded. Please include tiff.js');
         }
 
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
+        this.assertTiffFileSizeSupported(file);
 
-            reader.onload = async (e) => {
-                try {
-                    const arrayBuffer = e.target.result;
-                    const tiff = new Tiff({ buffer: arrayBuffer });
-                    const canvas = tiff.toCanvas();
+        const arrayBuffer = await this.readFileAsArrayBufferWithProgress(file, readProgressCallback);
+        let tiff = null;
+        try {
+            tiff = new Tiff({ buffer: arrayBuffer });
+        } catch (error) {
+            throw this.wrapTiffLibraryError(file, error, 'open TIFF');
+        }
 
-                    // Get image data
-                    const ctx = canvas.getContext('2d');
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        try {
+            const pageCount = Math.max(1, tiff.countDirectory());
+            const pages = [];
 
-                    // Check if multi-page TIFF
-                    const pageCount = tiff.countDirectory();
+            for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+                tiff.setDirectory(pageIndex);
 
-                    // Extract TIFF metadata for bit depth detection
-                    // TIFF tags: 258 = BitsPerSample, 277 = SamplesPerPixel, 262 = PhotometricInterpretation
+                const width = tiff.width();
+                const height = tiff.height();
+                const bitsPerSample = tiff.getField(258) || 8;
+                const samplesPerPixel = tiff.getField(277) || 1;
+                const photometric = tiff.getField(262);
+                const isGrayscale = samplesPerPixel === 1 && (photometric === 0 || photometric === 1);
+                const wantsUint16 = isGrayscale && bitsPerSample === 16;
+
+                let grayData = null;
+                let rgbaData = null;
+                let isUint16 = false;
+
+                if (wantsUint16) {
+                    try {
+                        grayData = this.extractUint16FromTiff(width, height, arrayBuffer, pageIndex);
+                        isUint16 = true;
+                    } catch (e) {
+                        console.warn(`TIFF uint16 extraction failed for page ${pageIndex} (${file.name}): ${e.message}`);
+                    }
+                }
+
+                if (!grayData) {
+                    rgbaData = this.readCurrentTiffPageRGBA(tiff, width, height);
+                    if (isGrayscale) {
+                        grayData = this.rgbaToGrayUint8(rgbaData);
+                    }
+                }
+
+                pages.push({
+                    pageIndex,
+                    width,
+                    height,
+                    isGrayscale,
+                    isUint16,
+                    grayData,
+                    rgbaData
+                });
+            }
+
+            return {
+                type: pageCount > 1 ? '3d-tiff' : '2d-tiff',
+                fileName: file.name,
+                width: pages[0] ? pages[0].width : 0,
+                height: pages[0] ? pages[0].height : 0,
+                pageCount,
+                pages
+            };
+        } catch (error) {
+            throw new Error(`Failed to parse TIFF: ${error.message}`);
+        } finally {
+            if (tiff && typeof tiff.close === 'function') {
+                tiff.close();
+            }
+        }
+    }
+
+    /**
+     * Load one or more TIFF files and combine all pages into one stack.
+     * @param {File[]|FileList} files
+     * @param {Function} progressCallback
+     * @returns {Promise<object>}
+     */
+    async loadTIFFGroup(files, progressCallback = null) {
+        const list = Array.from(files || []);
+        if (list.length === 0) {
+            throw new Error('No TIFF files provided');
+        }
+
+        const sorted = list
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+        const mergedPages = [];
+        let width = null;
+        let height = null;
+
+        if (progressCallback) {
+            progressCallback({ stage: 'loading', progress: 0 });
+        }
+
+        for (let i = 0; i < sorted.length; i++) {
+            const file = sorted[i];
+            const parsed = await this.loadTIFF(
+                file,
+                (fraction) => {
+                    if (progressCallback) {
+                        progressCallback({
+                            stage: 'loading',
+                            progress: Math.round(((i + fraction) / sorted.length) * 100)
+                        });
+                    }
+                }
+            );
+
+            for (const page of parsed.pages) {
+                if (width === null || height === null) {
+                    width = page.width;
+                    height = page.height;
+                } else if (page.width !== width || page.height !== height) {
+                    throw new Error(
+                        `TIFF page size mismatch in ${file.name}: expected ${width}x${height}, got ${page.width}x${page.height}`
+                    );
+                }
+
+                mergedPages.push({
+                    ...page,
+                    sourceFileName: file.name
+                });
+            }
+
+            if (progressCallback) {
+                progressCallback({
+                    stage: 'loading',
+                    progress: Math.round(((i + 1) / sorted.length) * 100)
+                });
+            }
+        }
+
+        if (mergedPages.length === 0) {
+            throw new Error('No TIFF pages found');
+        }
+
+        return {
+            type: mergedPages.length > 1 ? '3d-tiff' : '2d-tiff',
+            width,
+            height,
+            pageCount: mergedPages.length,
+            pages: mergedPages,
+            files: sorted
+        };
+    }
+
+    /**
+     * Scan TIFF group metadata without materializing full page buffers.
+     * @param {File[]|FileList} files
+     * @param {Function} progressCallback
+     * @returns {Promise<object>}
+     */
+    async scanTIFFGroupMetadata(files, progressCallback = null) {
+        const list = Array.from(files || []);
+        if (list.length === 0) {
+            throw new Error('No TIFF files provided');
+        }
+
+        const sorted = list
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+        if (typeof Tiff === 'undefined') {
+            throw new Error('TIFF library not loaded. Please include tiff.js');
+        }
+
+        const pages = [];
+        let width = null;
+        let height = null;
+        let totalPages = 0;
+        let allUint16Gray = true;
+        let hasColor = false;
+
+        if (progressCallback) {
+            progressCallback({ stage: 'metadata', progress: 0 });
+        }
+
+        for (let fileIndex = 0; fileIndex < sorted.length; fileIndex++) {
+            const file = sorted[fileIndex];
+            this.assertTiffFileSizeSupported(file);
+            const arrayBuffer = await this.readFileAsArrayBufferWithProgress(
+                file,
+                (fraction) => {
+                    if (progressCallback) {
+                        progressCallback({
+                            stage: 'metadata',
+                            progress: Math.round(((fileIndex + fraction) / sorted.length) * 100)
+                        });
+                    }
+                }
+            );
+            let tiff = null;
+            try {
+                tiff = new Tiff({ buffer: arrayBuffer });
+            } catch (error) {
+                throw this.wrapTiffLibraryError(file, error, 'scan TIFF metadata');
+            }
+
+            try {
+                const pageCount = Math.max(1, tiff.countDirectory());
+                for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+                    tiff.setDirectory(pageIndex);
+
+                    const pageWidth = tiff.width();
+                    const pageHeight = tiff.height();
                     const bitsPerSample = tiff.getField(258) || 8;
                     const samplesPerPixel = tiff.getField(277) || 1;
-                    const photometric = tiff.getField(262); // 0=WhiteIsZero, 1=BlackIsZero, 2=RGB
+                    const photometric = tiff.getField(262);
 
-                    // Determine if grayscale uint16
                     const isGrayscale = samplesPerPixel === 1 && (photometric === 0 || photometric === 1);
-                    const isUint16 = bitsPerSample === 16;
+                    const isUint16 = isGrayscale && bitsPerSample === 16;
 
-                    resolve({
-                        type: pageCount > 1 ? '3d-tiff' : '2d-tiff',
-                        width: canvas.width,
-                        height: canvas.height,
-                        pageCount: pageCount,
-                        imageData: imageData,
-                        tiff: tiff,
-                        // Raw data info for uint16 grayscale support
-                        rawBuffer: arrayBuffer,
-                        bitsPerSample: bitsPerSample,
-                        samplesPerPixel: samplesPerPixel,
-                        isGrayscale: isGrayscale,
-                        isUint16: isUint16
+                    if (width === null || height === null) {
+                        width = pageWidth;
+                        height = pageHeight;
+                    } else if (pageWidth !== width || pageHeight !== height) {
+                        throw new Error(
+                            `TIFF page size mismatch in ${file.name}: expected ${width}x${height}, got ${pageWidth}x${pageHeight}`
+                        );
+                    }
+
+                    if (!isGrayscale) {
+                        hasColor = true;
+                    }
+                    if (!isUint16) {
+                        allUint16Gray = false;
+                    }
+
+                    pages.push({
+                        fileIndex,
+                        pageIndex,
+                        isGrayscale,
+                        isUint16
                     });
+                    totalPages++;
+                }
+            } finally {
+                if (tiff && typeof tiff.close === 'function') {
+                    tiff.close();
+                }
+            }
 
-                } catch (error) {
-                    reject(new Error(`Failed to parse TIFF: ${error.message}`));
+            if (progressCallback) {
+                progressCallback({
+                    stage: 'metadata',
+                    progress: Math.round(((fileIndex + 1) / sorted.length) * 100)
+                });
+            }
+        }
+
+        if (totalPages === 0 || width === null || height === null) {
+            throw new Error('No TIFF pages found');
+        }
+
+        return {
+            files: sorted,
+            pages,
+            width,
+            height,
+            totalPages,
+            allUint16Gray,
+            hasColor
+        };
+    }
+
+    /**
+     * Load TIFF stack directly into an adaptively downsampled VolumeData to reduce peak memory.
+     * @param {File[]|FileList} files
+     * @param {object} options
+     * @param {Function} progressCallback
+     * @returns {Promise<{volumeData: VolumeData, downsample: object}>}
+     */
+    async loadTIFFGroupAsVolume(files, options = {}, progressCallback = null) {
+        const targetBytes = Number.isFinite(options.targetBytes) && options.targetBytes > 0
+            ? options.targetBytes
+            : 512 * 1024 * 1024;
+
+        const list = Array.from(files || []);
+        if (list.length === 0) {
+            throw new Error('No TIFF files provided');
+        }
+
+        const sorted = list
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+        if (sorted.length === 1) {
+            return this.loadSingleTIFFFileAsVolume(sorted[0], targetBytes, progressCallback);
+        }
+
+        const meta = await this.scanTIFFGroupMetadata(files, progressCallback);
+        const mode = (meta.totalPages === 1 && meta.hasColor)
+            ? 'rgb-single'
+            : (meta.allUint16Gray ? 'uint16-stack' : 'uint8-stack');
+
+        const bytesPerVoxel = mode === 'uint16-stack' ? 2 : 1;
+        const fullDepth = mode === 'rgb-single' ? 3 : meta.totalPages;
+        const fullBytes = meta.width * meta.height * fullDepth * bytesPerVoxel;
+
+        const scales = this.computeAdaptiveTiffScale(
+            meta.width,
+            meta.height,
+            meta.totalPages,
+            mode,
+            bytesPerVoxel,
+            targetBytes
+        );
+        const [sx, sy, sz] = scales;
+
+        const dstNx = Math.max(1, Math.ceil(meta.width / sx));
+        const dstNy = Math.max(1, Math.ceil(meta.height / sy));
+        const dstNz = mode === 'rgb-single'
+            ? 3
+            : Math.max(1, Math.ceil(meta.totalPages / sz));
+
+        const TypedArrayCtor = mode === 'uint16-stack' ? Uint16Array : Uint8Array;
+        const dst = new TypedArrayCtor(dstNx * dstNy * dstNz);
+        const dstSliceSize = dstNx * dstNy;
+
+        if (progressCallback) {
+            progressCallback({ stage: 'processing', progress: 0 });
+        }
+
+        let globalPage = 0;
+        let writtenSlices = 0;
+
+        for (let fileIndex = 0; fileIndex < meta.files.length; fileIndex++) {
+            const file = meta.files[fileIndex];
+            this.assertTiffFileSizeSupported(file);
+            const arrayBuffer = await this.readFileAsArrayBufferWithProgress(
+                file,
+                (fraction) => {
+                    if (progressCallback) {
+                        progressCallback({
+                            stage: 'loading',
+                            progress: Math.round(((fileIndex + fraction) / meta.files.length) * 100)
+                        });
+                    }
+                }
+            );
+            let tiff = null;
+            try {
+                tiff = new Tiff({ buffer: arrayBuffer });
+            } catch (error) {
+                throw this.wrapTiffLibraryError(file, error, 'decode TIFF');
+            }
+
+            try {
+                const pageCount = Math.max(1, tiff.countDirectory());
+                for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+                    const includePage = (mode === 'rgb-single')
+                        ? (globalPage === 0)
+                        : (globalPage % sz === 0);
+
+                    if (includePage) {
+                        tiff.setDirectory(pageIndex);
+
+                        if (mode === 'rgb-single') {
+                            const rgba = this.readCurrentTiffPageRGBA(tiff, meta.width, meta.height);
+                            this.copyRgbPageDownsampled(rgba, dst, meta.width, meta.height, dstNx, dstNy, sx, sy);
+                            writtenSlices = 3;
+                        } else if (mode === 'uint16-stack') {
+                            let gray16 = null;
+                            try {
+                                gray16 = this.extractUint16FromTiff(meta.width, meta.height, arrayBuffer, pageIndex);
+                            } catch (e) {
+                                const rgba = this.readCurrentTiffPageRGBA(tiff, meta.width, meta.height);
+                                const gray8 = this.rgbaToGrayUint8(rgba);
+                                gray16 = new Uint16Array(gray8.length);
+                                for (let i = 0; i < gray8.length; i++) {
+                                    gray16[i] = gray8[i] * 257;
+                                }
+                            }
+
+                            this.copyGrayPageDownsampled(
+                                gray16,
+                                dst,
+                                meta.width,
+                                meta.height,
+                                dstNx,
+                                dstNy,
+                                sx,
+                                sy,
+                                writtenSlices * dstSliceSize
+                            );
+                            writtenSlices++;
+                        } else {
+                            const rgba = this.readCurrentTiffPageRGBA(tiff, meta.width, meta.height);
+                            const gray8 = this.rgbaToGrayUint8(rgba);
+                            this.copyGrayPageDownsampled(
+                                gray8,
+                                dst,
+                                meta.width,
+                                meta.height,
+                                dstNx,
+                                dstNy,
+                                sx,
+                                sy,
+                                writtenSlices * dstSliceSize
+                            );
+                            writtenSlices++;
+                        }
+                    }
+
+                    globalPage++;
+                    if (progressCallback && (globalPage % 4 === 0 || globalPage === meta.totalPages)) {
+                        progressCallback({
+                            stage: 'processing',
+                            progress: Math.round((globalPage / meta.totalPages) * 100)
+                        });
+                    }
+                }
+            } finally {
+                if (tiff && typeof tiff.close === 'function') {
+                    tiff.close();
+                }
+            }
+        }
+
+        const metadata = {
+            dimensions: [dstNx, dstNy, dstNz],
+            dataType: mode === 'uint16-stack' ? 'uint16' : 'uint8',
+            spacing: [1.0 * sx, 1.0 * sy, 1.0 * (mode === 'rgb-single' ? 1 : sz)],
+            isRGB: mode === 'rgb-single'
+        };
+        const volumeData = new VolumeData(dst.buffer, metadata);
+
+        if (progressCallback) {
+            progressCallback({ stage: 'complete', progress: 100 });
+        }
+
+        return {
+            volumeData,
+            downsample: {
+                mode,
+                scale: [sx, sy, mode === 'rgb-single' ? 1 : sz],
+                beforeBytes: fullBytes,
+                afterBytes: volumeData.data.byteLength,
+                applied: sx > 1 || sy > 1 || (mode !== 'rgb-single' && sz > 1)
+            }
+        };
+    }
+
+    /**
+     * Single-file TIFF fast path: one read, metadata + decode/downsample in same buffer.
+     * This avoids the second full-file read used by the multi-file pipeline.
+     */
+    async loadSingleTIFFFileAsVolume(file, targetBytes, progressCallback = null) {
+        const streamed = await this.tryLoadSingleTIFFViaStreaming(file, targetBytes, progressCallback);
+        if (streamed) {
+            return streamed;
+        }
+
+        if (typeof Tiff === 'undefined') {
+            throw new Error('TIFF library not loaded. Please include tiff.js');
+        }
+
+        this.assertTiffFileSizeSupported(file);
+
+        const arrayBuffer = await this.readFileAsArrayBufferWithProgress(
+            file,
+            (fraction) => {
+                if (progressCallback) {
+                    progressCallback({
+                        stage: 'loading',
+                        progress: Math.round(fraction * 100)
+                    });
+                }
+            }
+        );
+
+        let tiff = null;
+        try {
+            tiff = new Tiff({ buffer: arrayBuffer });
+        } catch (error) {
+            throw this.wrapTiffLibraryError(file, error, 'open TIFF');
+        }
+        try {
+            const totalPages = Math.max(1, tiff.countDirectory());
+            let width = null;
+            let height = null;
+            let allUint16Gray = true;
+            let hasColor = false;
+
+            if (progressCallback) {
+                progressCallback({ stage: 'metadata', progress: 0 });
+            }
+
+            for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                tiff.setDirectory(pageIndex);
+
+                const pageWidth = tiff.width();
+                const pageHeight = tiff.height();
+                const bitsPerSample = tiff.getField(258) || 8;
+                const samplesPerPixel = tiff.getField(277) || 1;
+                const photometric = tiff.getField(262);
+                const isGrayscale = samplesPerPixel === 1 && (photometric === 0 || photometric === 1);
+                const isUint16 = isGrayscale && bitsPerSample === 16;
+
+                if (width === null || height === null) {
+                    width = pageWidth;
+                    height = pageHeight;
+                } else if (pageWidth !== width || pageHeight !== height) {
+                    throw new Error(
+                        `TIFF page size mismatch in ${file.name}: expected ${width}x${height}, got ${pageWidth}x${pageHeight}`
+                    );
+                }
+
+                if (!isGrayscale) hasColor = true;
+                if (!isUint16) allUint16Gray = false;
+
+                if (progressCallback && (pageIndex % 8 === 0 || pageIndex === totalPages - 1)) {
+                    progressCallback({
+                        stage: 'metadata',
+                        progress: Math.round(((pageIndex + 1) / totalPages) * 100)
+                    });
+                }
+            }
+
+            const mode = (totalPages === 1 && hasColor)
+                ? 'rgb-single'
+                : (allUint16Gray ? 'uint16-stack' : 'uint8-stack');
+
+            const bytesPerVoxel = mode === 'uint16-stack' ? 2 : 1;
+            const fullDepth = mode === 'rgb-single' ? 3 : totalPages;
+            const fullBytes = width * height * fullDepth * bytesPerVoxel;
+
+            const [sx, sy, sz] = this.computeAdaptiveTiffScale(
+                width,
+                height,
+                totalPages,
+                mode,
+                bytesPerVoxel,
+                targetBytes
+            );
+
+            const dstNx = Math.max(1, Math.ceil(width / sx));
+            const dstNy = Math.max(1, Math.ceil(height / sy));
+            const dstNz = mode === 'rgb-single' ? 3 : Math.max(1, Math.ceil(totalPages / sz));
+            const TypedArrayCtor = mode === 'uint16-stack' ? Uint16Array : Uint8Array;
+            const dst = new TypedArrayCtor(dstNx * dstNy * dstNz);
+            const dstSliceSize = dstNx * dstNy;
+
+            if (progressCallback) {
+                progressCallback({ stage: 'processing', progress: 0 });
+            }
+
+            let writtenSlices = 0;
+            for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                const includePage = (mode === 'rgb-single')
+                    ? (pageIndex === 0)
+                    : (pageIndex % sz === 0);
+
+                if (includePage) {
+                    tiff.setDirectory(pageIndex);
+                    if (mode === 'rgb-single') {
+                        const rgba = this.readCurrentTiffPageRGBA(tiff, width, height);
+                        this.copyRgbPageDownsampled(rgba, dst, width, height, dstNx, dstNy, sx, sy);
+                        writtenSlices = 3;
+                    } else if (mode === 'uint16-stack') {
+                        let gray16 = null;
+                        try {
+                            gray16 = this.extractUint16FromTiff(width, height, arrayBuffer, pageIndex);
+                        } catch (e) {
+                            const rgba = this.readCurrentTiffPageRGBA(tiff, width, height);
+                            const gray8 = this.rgbaToGrayUint8(rgba);
+                            gray16 = new Uint16Array(gray8.length);
+                            for (let i = 0; i < gray8.length; i++) {
+                                gray16[i] = gray8[i] * 257;
+                            }
+                        }
+                        this.copyGrayPageDownsampled(
+                            gray16,
+                            dst,
+                            width,
+                            height,
+                            dstNx,
+                            dstNy,
+                            sx,
+                            sy,
+                            writtenSlices * dstSliceSize
+                        );
+                        writtenSlices++;
+                    } else {
+                        const rgba = this.readCurrentTiffPageRGBA(tiff, width, height);
+                        const gray8 = this.rgbaToGrayUint8(rgba);
+                        this.copyGrayPageDownsampled(
+                            gray8,
+                            dst,
+                            width,
+                            height,
+                            dstNx,
+                            dstNy,
+                            sx,
+                            sy,
+                            writtenSlices * dstSliceSize
+                        );
+                        writtenSlices++;
+                    }
+                }
+
+                if (progressCallback && (pageIndex % 4 === 0 || pageIndex === totalPages - 1)) {
+                    progressCallback({
+                        stage: 'processing',
+                        progress: Math.round(((pageIndex + 1) / totalPages) * 100)
+                    });
+                }
+            }
+
+            const metadata = {
+                dimensions: [dstNx, dstNy, dstNz],
+                dataType: mode === 'uint16-stack' ? 'uint16' : 'uint8',
+                spacing: [1.0 * sx, 1.0 * sy, 1.0 * (mode === 'rgb-single' ? 1 : sz)],
+                isRGB: mode === 'rgb-single'
+            };
+            const volumeData = new VolumeData(dst.buffer, metadata);
+
+            if (progressCallback) {
+                progressCallback({ stage: 'complete', progress: 100 });
+            }
+
+            return {
+                volumeData,
+                downsample: {
+                    mode,
+                    scale: [sx, sy, mode === 'rgb-single' ? 1 : sz],
+                    beforeBytes: fullBytes,
+                    afterBytes: volumeData.data.byteLength,
+                    applied: sx > 1 || sy > 1 || (mode !== 'rgb-single' && sz > 1)
                 }
             };
+        } finally {
+            if (tiff && typeof tiff.close === 'function') {
+                tiff.close();
+            }
+        }
+    }
 
-            reader.onerror = () => {
-                reject(new Error('Failed to read TIFF file'));
+    async tryLoadSingleTIFFViaStreaming(file, targetBytes, progressCallback = null) {
+        if (typeof TiffStreamReader === 'undefined') {
+            return null;
+        }
+
+        let reader = null;
+        try {
+            reader = new TiffStreamReader(file);
+            const pages = await reader.scanPages();
+            if (!Array.isArray(pages) || pages.length === 0) {
+                return null;
+            }
+
+            if (progressCallback) {
+                progressCallback({ stage: 'metadata', progress: 100 });
+            }
+
+            const first = pages[0];
+            const width = first.width;
+            const height = first.height;
+            if (!width || !height) {
+                return null;
+            }
+
+            const hasColor = pages.some((p) => p.samplesPerPixel >= 3 && !(p.photometric === 0 || p.photometric === 1));
+            const allUint16Gray = pages.every((p) =>
+                p.samplesPerPixel === 1 &&
+                (p.photometric === 0 || p.photometric === 1) &&
+                p.bitsPerSample === 16
+            );
+            const mode = (pages.length === 1 && hasColor)
+                ? 'rgb-single'
+                : (allUint16Gray ? 'uint16-stack' : 'uint8-stack');
+
+            const unsupported = pages.find((p) => !reader.canStreamPage(p));
+            if (unsupported) {
+                const reason = reader.getUnsupportedReason(unsupported) || 'Unsupported TIFF layout';
+                if (file.size > this.getTiffSingleFileHardLimitBytes()) {
+                    throw new Error(
+                        `${reason}. File is too large for fallback TIFF decoder path. ` +
+                        'Use a TIFF stack (many smaller files) or convert to DICOM/RAW.'
+                    );
+                }
+                return null;
+            }
+
+            const bytesPerVoxel = mode === 'uint16-stack' ? 2 : 1;
+            const fullDepth = mode === 'rgb-single' ? 3 : pages.length;
+            const fullBytes = width * height * fullDepth * bytesPerVoxel;
+            const [sx, sy, sz] = this.computeAdaptiveTiffScale(
+                width,
+                height,
+                pages.length,
+                mode,
+                bytesPerVoxel,
+                targetBytes
+            );
+
+            const dstNx = Math.max(1, Math.ceil(width / sx));
+            const dstNy = Math.max(1, Math.ceil(height / sy));
+            const dstNz = mode === 'rgb-single' ? 3 : Math.max(1, Math.ceil(pages.length / sz));
+            const TypedArrayCtor = mode === 'uint16-stack' ? Uint16Array : Uint8Array;
+            const dst = new TypedArrayCtor(dstNx * dstNy * dstNz);
+            const dstSliceSize = dstNx * dstNy;
+
+            if (progressCallback) {
+                progressCallback({ stage: 'processing', progress: 0 });
+            }
+
+            let writtenSlices = 0;
+            for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+                const includePage = (mode === 'rgb-single')
+                    ? (pageIndex === 0)
+                    : (pageIndex % sz === 0);
+
+                if (includePage) {
+                    const page = pages[pageIndex];
+                    if (mode === 'rgb-single') {
+                        const rgb = await reader.decodePageToRgbDownsampled(page, sx, sy, dstNx, dstNy);
+                        dst.set(rgb.r, 0);
+                        dst.set(rgb.g, dstSliceSize);
+                        dst.set(rgb.b, dstSliceSize * 2);
+                        writtenSlices = 3;
+                    } else {
+                        const targetType = mode === 'uint16-stack' ? 'uint16' : 'uint8';
+                        const gray = await reader.decodePageToGrayDownsampled(page, sx, sy, dstNx, dstNy, targetType);
+                        dst.set(gray, writtenSlices * dstSliceSize);
+                        writtenSlices++;
+                    }
+                }
+
+                if (progressCallback && (pageIndex % 4 === 0 || pageIndex === pages.length - 1)) {
+                    progressCallback({
+                        stage: 'processing',
+                        progress: Math.round(((pageIndex + 1) / pages.length) * 100)
+                    });
+                }
+            }
+
+            const metadata = {
+                dimensions: [dstNx, dstNy, dstNz],
+                dataType: mode === 'uint16-stack' ? 'uint16' : 'uint8',
+                spacing: [1.0 * sx, 1.0 * sy, 1.0 * (mode === 'rgb-single' ? 1 : sz)],
+                isRGB: mode === 'rgb-single'
             };
+            const volumeData = new VolumeData(dst.buffer, metadata);
 
-            reader.readAsArrayBuffer(file);
-        });
+            if (progressCallback) {
+                progressCallback({ stage: 'complete', progress: 100 });
+            }
+
+            return {
+                volumeData,
+                downsample: {
+                    mode,
+                    scale: [sx, sy, mode === 'rgb-single' ? 1 : sz],
+                    beforeBytes: fullBytes,
+                    afterBytes: volumeData.data.byteLength,
+                    applied: sx > 1 || sy > 1 || (mode !== 'rgb-single' && sz > 1)
+                }
+            };
+        } catch (error) {
+            const message = (error && error.message) ? error.message : String(error || '');
+            if (file.size > this.getTiffSingleFileHardLimitBytes()) {
+                throw new Error(
+                    `Streaming TIFF path failed for ${file.name}: ${message}. ` +
+                    'Use a TIFF stack (many smaller files) or convert to DICOM/RAW.'
+                );
+            }
+            return null;
+        }
+    }
+
+    getTiffSingleFileHardLimitBytes() {
+        if (typeof ViewerConfig !== 'undefined' &&
+            ViewerConfig.limits &&
+            Number.isFinite(ViewerConfig.limits.tiffSingleFileHardLimitBytes)) {
+            return ViewerConfig.limits.tiffSingleFileHardLimitBytes;
+        }
+        return 1024 * 1024 * 1024;
+    }
+
+    assertTiffFileSizeSupported(file) {
+        if (!file || !Number.isFinite(file.size)) return;
+        const hardLimit = this.getTiffSingleFileHardLimitBytes();
+        if (!Number.isFinite(hardLimit) || hardLimit <= 0) return;
+        if (file.size <= hardLimit) return;
+
+        const sizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+        const limitGB = (hardLimit / (1024 * 1024 * 1024)).toFixed(2);
+        throw new Error(
+            `Single TIFF file is ${sizeGB} GB, which exceeds browser TIFF decoder limit (${limitGB} GB). ` +
+            'Use a TIFF stack (many smaller files) or convert to DICOM/RAW.'
+        );
+    }
+
+    wrapTiffLibraryError(file, error, actionLabel) {
+        const baseMessage = (error && error.message) ? error.message : String(error || 'unknown error');
+        const isAbort = /abort\(\{\}\)|_TIFFOpen|TIFFOpen/i.test(baseMessage);
+        const fileName = file && file.name ? file.name : 'TIFF file';
+
+        if (!isAbort) {
+            return new Error(`Failed to ${actionLabel} (${fileName}): ${baseMessage}`);
+        }
+
+        const limitGB = (this.getTiffSingleFileHardLimitBytes() / (1024 * 1024 * 1024)).toFixed(2);
+        return new Error(
+            `TIFF decoder ran out of memory while trying to ${actionLabel} (${fileName}). ` +
+            `Single-file TIFF support is effectively limited to around ${limitGB} GB in this browser path. ` +
+            'Use a TIFF stack (many smaller files) or convert to DICOM/RAW.'
+        );
+    }
+
+    computeAdaptiveTiffScale(width, height, depth, mode, bytesPerVoxel, targetBytes) {
+        if (mode === 'rgb-single') {
+            const rawBytes = width * height * 3;
+            if (rawBytes <= targetBytes) return [1, 1, 1];
+
+            let sxy = Math.max(2, Math.ceil(Math.sqrt(rawBytes / targetBytes)));
+            const estimate = () => Math.ceil(width / sxy) * Math.ceil(height / sxy) * 3;
+            while (estimate() > targetBytes && (sxy < width || sxy < height)) {
+                sxy++;
+            }
+            return [sxy, sxy, 1];
+        }
+
+        const rawBytes = width * height * depth * bytesPerVoxel;
+        if (rawBytes <= targetBytes) return [1, 1, 1];
+
+        let sx = Math.max(2, Math.ceil(Math.cbrt(rawBytes / targetBytes)));
+        let sy = sx;
+        let sz = sx;
+
+        const estimate = () =>
+            Math.ceil(width / sx) *
+            Math.ceil(height / sy) *
+            Math.ceil(depth / sz) *
+            bytesPerVoxel;
+
+        while (estimate() > targetBytes && (sx < width || sy < height || sz < depth)) {
+            if (sx <= sy && sx <= sz && sx < width) {
+                sx++;
+            } else if (sy <= sx && sy <= sz && sy < height) {
+                sy++;
+            } else if (sz < depth) {
+                sz++;
+            } else {
+                if (sx < width) sx++;
+                if (sy < height) sy++;
+                if (sz < depth) sz++;
+            }
+        }
+
+        return [sx, sy, sz];
+    }
+
+    copyGrayPageDownsampled(src, dst, srcW, srcH, dstW, dstH, sx, sy, dstOffset) {
+        for (let dy = 0; dy < dstH; dy++) {
+            const srcY = Math.min(dy * sy, srcH - 1);
+            for (let dx = 0; dx < dstW; dx++) {
+                const srcX = Math.min(dx * sx, srcW - 1);
+                dst[dstOffset + dx + dy * dstW] = src[srcX + srcY * srcW];
+            }
+        }
+    }
+
+    copyRgbPageDownsampled(rgba, dst, srcW, srcH, dstW, dstH, sx, sy) {
+        const sliceSize = dstW * dstH;
+        for (let dy = 0; dy < dstH; dy++) {
+            const srcY = Math.min(dy * sy, srcH - 1);
+            for (let dx = 0; dx < dstW; dx++) {
+                const srcX = Math.min(dx * sx, srcW - 1);
+                const srcIdx = (srcX + srcY * srcW) * 4;
+                const dstIdx = dx + dy * dstW;
+                dst[dstIdx] = rgba[srcIdx];
+                dst[dstIdx + sliceSize] = rgba[srcIdx + 1];
+                dst[dstIdx + sliceSize * 2] = rgba[srcIdx + 2];
+            }
+        }
+    }
+
+    readCurrentTiffPageRGBA(tiff, width, height) {
+        const canvas = tiff.toCanvas();
+        if (!canvas || canvas.width !== width || canvas.height !== height) {
+            throw new Error('Failed to render TIFF page to canvas');
+        }
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Failed to get canvas context for TIFF page');
+        }
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        return imageData.data;
+    }
+
+    rgbaToGrayUint8(rgbaData) {
+        const length = Math.floor(rgbaData.length / 4);
+        const gray = new Uint8Array(length);
+        for (let i = 0, j = 0; i < rgbaData.length; i += 4, j++) {
+            gray[j] = rgbaData[i];
+        }
+        return gray;
     }
 
     /**
@@ -794,45 +1691,25 @@ class FileParser {
      * @returns {VolumeData}
      */
     convertTiffToVolume(tiffData) {
-        const { width, height, isGrayscale, isUint16, rawBuffer, tiff } = tiffData;
+        const pages = Array.isArray(tiffData.pages) ? tiffData.pages : [];
+        if (pages.length === 0) {
+            throw new Error('No TIFF pages available for conversion');
+        }
 
-        let arrayBuffer, metadata;
+        const width = tiffData.width || pages[0].width;
+        const height = tiffData.height || pages[0].height;
 
-        if (isGrayscale && isUint16) {
-            // Extract raw uint16 values from TIFF
-            const data = this.extractUint16FromTiff(width, height, rawBuffer);
-            arrayBuffer = data.buffer;
-            metadata = {
-                dimensions: [width, height, 1],
-                dataType: 'uint16',
-                spacing: [1.0, 1.0, 1.0],
-                isRGB: false
-            };
-        } else if (isGrayscale) {
-            // 8-bit grayscale
-            const canvas = tiff.toCanvas();
-            const ctx = canvas.getContext('2d');
-            const imageData = ctx.getImageData(0, 0, width, height);
-            const pixels = imageData.data;
-
-            const data = new Uint8Array(width * height);
-            for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
-                data[j] = pixels[i];
+        for (const page of pages) {
+            if (page.width !== width || page.height !== height) {
+                throw new Error(
+                    `TIFF page size mismatch during conversion: expected ${width}x${height}, got ${page.width}x${page.height}`
+                );
             }
-            arrayBuffer = data.buffer;
-            metadata = {
-                dimensions: [width, height, 1],
-                dataType: 'uint8',
-                spacing: [1.0, 1.0, 1.0],
-                isRGB: false
-            };
-        } else {
-            // RGB TIFF - treat as 3-channel volume
-            const canvas = tiff.toCanvas();
-            const ctx = canvas.getContext('2d');
-            const imageData = ctx.getImageData(0, 0, width, height);
-            const pixels = imageData.data;
+        }
 
+        // Single RGB page keeps existing behavior (R/G/B mapped to z=0/1/2).
+        if (pages.length === 1 && !pages[0].isGrayscale) {
+            const pixels = pages[0].rgbaData || new Uint8Array(width * height * 4);
             const data = new Uint8Array(width * height * 3);
             const sliceSize = width * height;
 
@@ -841,22 +1718,78 @@ class FileParser {
                 data[j + sliceSize] = pixels[i + 1];
                 data[j + sliceSize * 2] = pixels[i + 2];
             }
-            arrayBuffer = data.buffer;
-            metadata = {
+
+            return new VolumeData(data.buffer, {
                 dimensions: [width, height, 3],
                 dataType: 'uint8',
                 spacing: [1.0, 1.0, 1.0],
                 isRGB: true
-            };
+            });
         }
 
-        return new VolumeData(arrayBuffer, metadata);
+        const sliceSize = width * height;
+        const depth = pages.length;
+        const allUint16Gray = pages.every((page) => page.isGrayscale && page.isUint16 && page.grayData instanceof Uint16Array);
+
+        if (allUint16Gray) {
+            const data = new Uint16Array(sliceSize * depth);
+
+            for (let z = 0; z < depth; z++) {
+                const gray = pages[z].grayData;
+                if (gray.length < sliceSize) {
+                    throw new Error(`TIFF page ${z} has insufficient uint16 data`);
+                }
+                data.set(gray.subarray(0, sliceSize), z * sliceSize);
+            }
+
+            return new VolumeData(data.buffer, {
+                dimensions: [width, height, depth],
+                dataType: 'uint16',
+                spacing: [1.0, 1.0, 1.0],
+                isRGB: false
+            });
+        }
+
+        // Mixed/8-bit pages -> grayscale uint8 stack.
+        const data = new Uint8Array(sliceSize * depth);
+        for (let z = 0; z < depth; z++) {
+            const page = pages[z];
+            let gray = null;
+
+            if (page.grayData instanceof Uint8Array) {
+                gray = page.grayData;
+            } else if (page.grayData instanceof Uint16Array) {
+                gray = new Uint8Array(sliceSize);
+                const src = page.grayData;
+                const limit = Math.min(sliceSize, src.length);
+                for (let i = 0; i < limit; i++) {
+                    gray[i] = src[i] > 255 ? (src[i] >> 8) : src[i];
+                }
+            } else if (page.rgbaData) {
+                gray = this.rgbaToGrayUint8(page.rgbaData);
+            } else {
+                gray = new Uint8Array(sliceSize);
+            }
+
+            if (gray.length < sliceSize) {
+                throw new Error(`TIFF page ${z} has insufficient grayscale data`);
+            }
+
+            data.set(gray.subarray(0, sliceSize), z * sliceSize);
+        }
+
+        return new VolumeData(data.buffer, {
+            dimensions: [width, height, depth],
+            dataType: 'uint8',
+            spacing: [1.0, 1.0, 1.0],
+            isRGB: false
+        });
     }
 
     /**
      * Extract uint16 values from TIFF raw buffer
      */
-    extractUint16FromTiff(width, height, rawBuffer) {
+    extractUint16FromTiff(width, height, rawBuffer, pageIndex = 0) {
         const data = new Uint16Array(width * height);
         const dataView = new DataView(rawBuffer);
         const expectedDataSize = width * height * 2;
@@ -865,8 +1798,13 @@ class FileParser {
         const byteOrder = dataView.getUint16(0, false);
         const littleEndian = (byteOrder === 0x4949); // 'II' = little endian
 
-        // Parse TIFF IFD manually since tiff.js returns invalid values for offsets
-        const tags = this.parseTiffIFD(dataView, littleEndian);
+        const ifdOffsets = this.getTiffIFDOffsets(dataView, littleEndian);
+        if (ifdOffsets.length === 0) {
+            throw new Error('No TIFF IFDs found');
+        }
+
+        const ifdOffset = ifdOffsets[Math.max(0, Math.min(pageIndex, ifdOffsets.length - 1))];
+        const tags = this.parseTiffIFDAtOffset(dataView, littleEndian, ifdOffset);
 
         const rowsPerStrip = tags.rowsPerStrip || height;
         const stripOffsetsArray = tags.stripOffsets || [];
@@ -902,6 +1840,9 @@ class FileParser {
                 }
             }
         } catch (e) {
+            if (pageIndex > 0) {
+                throw new Error(`Failed to extract uint16 TIFF page ${pageIndex}: ${e.message}`);
+            }
             // Fallback on any error
             console.warn('TIFF extraction failed, using fallback:', e.message);
             for (let i = 0; i < data.length; i++) {
@@ -919,12 +1860,40 @@ class FileParser {
      * Parse TIFF IFD to extract tag values directly from buffer
      */
     parseTiffIFD(dataView, littleEndian) {
+        const offsets = this.getTiffIFDOffsets(dataView, littleEndian);
+        if (offsets.length === 0) return {};
+        return this.parseTiffIFDAtOffset(dataView, littleEndian, offsets[0]);
+    }
+
+    /**
+     * Parse TIFF IFD chain and return all directory offsets.
+     */
+    getTiffIFDOffsets(dataView, littleEndian) {
+        const offsets = [];
+        let ifdOffset = dataView.getUint32(4, littleEndian);
+        let guard = 0;
+
+        while (ifdOffset > 0 && ifdOffset + 2 < dataView.byteLength && guard < 4096) {
+            offsets.push(ifdOffset);
+
+            const numEntries = dataView.getUint16(ifdOffset, littleEndian);
+            const nextIfdPos = ifdOffset + 2 + numEntries * 12;
+            if (nextIfdPos + 4 > dataView.byteLength) break;
+
+            ifdOffset = dataView.getUint32(nextIfdPos, littleEndian);
+            guard++;
+        }
+
+        return offsets;
+    }
+
+    /**
+     * Parse a single TIFF IFD.
+     */
+    parseTiffIFDAtOffset(dataView, littleEndian, ifdOffset) {
         const tags = {};
 
         try {
-            // TIFF header: bytes 4-7 contain offset to first IFD
-            const ifdOffset = dataView.getUint32(4, littleEndian);
-
             // Number of directory entries
             const numEntries = dataView.getUint16(ifdOffset, littleEndian);
 
@@ -960,6 +1929,15 @@ class FileParser {
                         tags.rowsPerStrip = dataView.getUint16(valueOffset, littleEndian);
                     } else {
                         tags.rowsPerStrip = dataView.getUint32(valueOffset, littleEndian);
+                    }
+                } else if (tagId === 279) { // StripByteCounts
+                    tags.stripByteCounts = [];
+                    for (let j = 0; j < count; j++) {
+                        if (tagType === 3) {
+                            tags.stripByteCounts.push(dataView.getUint16(valueOffset + j * 2, littleEndian));
+                        } else {
+                            tags.stripByteCounts.push(dataView.getUint32(valueOffset + j * 4, littleEndian));
+                        }
                     }
                 }
             }
@@ -1013,6 +1991,16 @@ class FileParser {
      */
     async loadDICOMSeries(seriesGroup, progressCallback) {
         return this.dicomLoader.loadSeries(seriesGroup, progressCallback);
+    }
+
+    /**
+     * Load a DICOM series with progressive/streaming behavior
+     * @param {object} seriesGroup
+     * @param {object} callbacks
+     * @returns {Promise<ProgressiveVolumeData|StreamingVolumeData|DicomStreamingVolumeData>}
+     */
+    async loadDICOMSeriesProgressive(seriesGroup, callbacks) {
+        return this.dicomLoader.loadSeriesProgressive(seriesGroup, callbacks);
     }
 
     /**

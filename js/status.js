@@ -65,12 +65,14 @@ class ViewerStatus {
 
         const [nx, ny, nz] = dimensions;
         const displayName = loading ? `${name} (loading...)` : name;
+        const statusSummary = this.getVolumeStatusSummary(loading);
+        const suffix = statusSummary ? ` | ${statusSummary}` : '';
 
         if (viewer.fileName) {
             viewer.fileName.textContent = displayName || 'No file loaded';
         }
         if (viewer.imageInfo) {
-            viewer.imageInfo.textContent = `${nx}x${ny}x${nz} | ${label}`;
+            viewer.imageInfo.textContent = `${nx}x${ny}x${nz} | ${label}${suffix}`;
         }
 
         if (viewer.sliceIndicatorXY) {
@@ -82,6 +84,150 @@ class ViewerStatus {
         if (viewer.sliceIndicatorYZ) {
             this.setSliceIndicator('yz', Math.floor(nx / 2), nx);
         }
+
+        this.refreshFooterDetails();
+    }
+
+    getVolumeStatusSummary(loading = false) {
+        const viewer = this.viewer;
+        const state = viewer && viewer.volumeState ? viewer.volumeState : null;
+        if (!state) return '';
+
+        if (state.isSourceDownsampled) {
+            return 'Source reduced for stability';
+        }
+
+        if (state.isStreaming) {
+            return 'Streaming preview';
+        }
+
+        if (!state.hasFullData) {
+            if (loading || state.lowResVolume) {
+                return 'Preview mode';
+            }
+            return 'Loading';
+        }
+
+        return 'Full quality';
+    }
+
+    refreshFooterDetails() {
+        const viewer = this.viewer;
+        if (!viewer || !viewer.footerInfoGrid) return;
+
+        const rows = this.getFooterDetailRows();
+        viewer.footerInfoGrid.replaceChildren();
+
+        for (const row of rows) {
+            const labelEl = document.createElement('span');
+            labelEl.className = 'footer-info-label';
+            labelEl.textContent = row.label;
+
+            const valueEl = document.createElement('span');
+            valueEl.className = 'footer-info-value';
+            valueEl.textContent = row.value;
+            valueEl.title = row.value;
+
+            viewer.footerInfoGrid.appendChild(labelEl);
+            viewer.footerInfoGrid.appendChild(valueEl);
+        }
+    }
+
+    getFooterDetailRows() {
+        const viewer = this.viewer;
+        const state = viewer && viewer.volumeState ? viewer.volumeState : null;
+
+        if (!state || !state.dimensions) {
+            return [{ label: 'Dataset', value: 'No volume loaded' }];
+        }
+
+        const renderer3D = viewer.ctViewer && viewer.ctViewer.renderer3D ? viewer.ctViewer.renderer3D : null;
+        const active3D = renderer3D && renderer3D.volumeData ? renderer3D.volumeData : null;
+        const active3DBytes = active3D && active3D.data && Number.isFinite(active3D.data.byteLength)
+            ? active3D.data.byteLength
+            : null;
+
+        let active3DProfile = '--';
+        if (active3D) {
+            if (active3D.isLowRes) {
+                active3DProfile = 'Low preview';
+            } else if (active3D.isEnhanced) {
+                active3DProfile = 'Mid enhanced';
+            } else {
+                active3DProfile = 'Full';
+            }
+        }
+
+        const rows = [];
+        const pushRow = (label, value) => {
+            if (!value || value === '--') return;
+            rows.push({ label, value });
+        };
+
+        const dims = this.formatDimensions(state.dimensions);
+        const dtype = state.dataType || '--';
+        const summary = (dims !== '--' && dtype !== '--') ? `${dims} (${dtype})` : (dims !== '--' ? dims : dtype);
+        pushRow('Volume', summary);
+        pushRow('Status', this.getVolumeStatusSummary(false));
+
+        const selected3D = this.getSelected3DResolutionLabel();
+        const renderSummary = (selected3D !== '--' && active3DProfile !== '--')
+            ? `${selected3D} (${active3DProfile})`
+            : (selected3D !== '--' ? selected3D : active3DProfile);
+        pushRow('3D', renderSummary);
+
+        const disk = this.formatBytes(state.sourceBytes);
+        const decoded = this.formatBytes(state.loadedBytes);
+        if (disk !== '--' || decoded !== '--') {
+            const memSummary = (disk !== '--' && decoded !== '--')
+                ? `${disk} disk | ${decoded} decoded`
+                : (disk !== '--' ? `${disk} disk` : `${decoded} decoded`);
+            pushRow('Storage', memSummary);
+        }
+
+        const active3DMem = this.formatBytes(active3DBytes);
+        if (active3DMem !== '--') {
+            const activeDims = this.formatDimensions(active3D && active3D.dimensions);
+            const activeSummary = activeDims !== '--'
+                ? `${active3DMem} (${activeDims})`
+                : active3DMem;
+            pushRow('3D memory', activeSummary);
+        }
+
+        if (state.isSourceDownsampled) {
+            pushRow('Note', 'Source reduced for stability');
+        }
+
+        return rows;
+    }
+
+    getSelected3DResolutionLabel() {
+        const viewer = this.viewer;
+        const select = viewer && viewer.resolution3DSelect ? viewer.resolution3DSelect : null;
+        if (!select || !select.options || select.selectedIndex < 0) return '--';
+        const option = select.options[select.selectedIndex];
+        if (!option || !option.textContent) return '--';
+        return option.textContent.trim();
+    }
+
+    formatDimensions(dims) {
+        if (!Array.isArray(dims) || dims.length !== 3) return '--';
+        const [nx, ny, nz] = dims;
+        if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return '--';
+        return `${nx}x${ny}x${nz}`;
+    }
+
+    formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return '--';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = bytes;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024;
+            unitIndex++;
+        }
+        const precision = value >= 100 ? 0 : (value >= 10 ? 1 : 2);
+        return `${value.toFixed(precision)} ${units[unitIndex]}`;
     }
 
     setSliceIndicator(axis, sliceIndex, totalSlices) {
@@ -132,19 +278,26 @@ class ViewerStatus {
     updateLoadingProgress(progress) {
         const progressEl = document.querySelector('.loading-progress');
         if (progressEl) {
+            const percent = Number.isFinite(progress && progress.progress)
+                ? Math.max(0, Math.min(100, Math.round(progress.progress)))
+                : null;
+
             if (progress.stage === 'metadata') {
-                progressEl.textContent = 'Loading metadata...';
+                progressEl.textContent = percent === null
+                    ? 'Loading metadata...'
+                    : `Loading metadata... ${percent}%`;
             } else if (progress.stage === 'loading') {
-                progressEl.textContent = 'Loading volume data...';
+                progressEl.textContent = percent === null
+                    ? 'Loading volume data...'
+                    : `Loading volume data... ${percent}%`;
             } else if (progress.stage === 'streaming') {
-                const percent = Number.isFinite(progress.progress)
-                    ? Math.max(0, Math.min(100, Math.round(progress.progress)))
-                    : null;
                 progressEl.textContent = percent === null
                     ? 'Streaming mode: Creating preview...'
                     : `Streaming mode: Creating preview... ${percent}%`;
             } else if (progress.stage === 'parsing' || progress.stage === 'processing') {
-                progressEl.textContent = 'Processing volume data...';
+                progressEl.textContent = percent === null
+                    ? 'Processing volume data...'
+                    : `Processing volume data... ${percent}%`;
             } else if (progress.stage === 'complete') {
                 progressEl.textContent = 'Complete!';
             }

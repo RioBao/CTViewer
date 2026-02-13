@@ -33,6 +33,8 @@ class ImageViewer {
         this.fileName = document.getElementById('fileName');
         this.imageInfo = document.getElementById('imageInfo');
         this.zoomLevel = document.getElementById('zoomLevel');
+        this.footerInfoPanel = document.getElementById('footerInfoPanel');
+        this.footerInfoGrid = document.getElementById('footerInfoGrid');
 
         // Overlay UI elements
         this.topOverlay = document.getElementById('topOverlay');
@@ -84,6 +86,7 @@ class ImageViewer {
             histogramOpen: false,
             histogramPinned: false,
             aboutOpen: false,
+            footerInfoOpen: false,
             crosshairEnabled: false,
             threeDPanelOpen: false,
             toolDockDragging: false,
@@ -162,6 +165,31 @@ class ImageViewer {
             this.viewport3DPanel.addEventListener('mousedown', (e) => e.stopPropagation());
         }
 
+        if (this.imageInfo) {
+            this.imageInfo.classList.add('info-trigger');
+            this.imageInfo.setAttribute('tabindex', '0');
+            this.imageInfo.setAttribute('role', 'button');
+            this.imageInfo.setAttribute('aria-haspopup', 'dialog');
+            this.imageInfo.setAttribute('aria-expanded', 'false');
+            this.imageInfo.setAttribute('title', 'Show technical details');
+            this.imageInfo.addEventListener('mousedown', (e) => e.stopPropagation());
+            this.imageInfo.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleFooterInfoPanel();
+            });
+            this.imageInfo.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.toggleFooterInfoPanel();
+                }
+            });
+        }
+
+        if (this.footerInfoPanel) {
+            this.footerInfoPanel.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+
         document.addEventListener('mousedown', (e) => {
             const target = e.target;
 
@@ -187,6 +215,14 @@ class ImageViewer {
                 !this.viewport3DControls.contains(target)) {
                 this.set3DPanelOpen(false);
             }
+
+            if (this.ui.footerInfoOpen &&
+                this.footerInfoPanel &&
+                !this.footerInfoPanel.contains(target) &&
+                this.imageInfo &&
+                !this.imageInfo.contains(target)) {
+                this.setFooterInfoOpen(false);
+            }
         });
 
         window.addEventListener('resize', () => {
@@ -210,6 +246,7 @@ class ImageViewer {
         this.setAboutOpen(false);
         this.setHistogramOpen(false);
         this.set3DPanelOpen(false);
+        this.setFooterInfoOpen(false);
     }
 
     bindTopOverlayBehavior() {
@@ -627,6 +664,29 @@ class ImageViewer {
         this.setAboutOpen(next);
     }
 
+    setFooterInfoOpen(open) {
+        this.ui.footerInfoOpen = !!open;
+
+        if (this.footerInfoPanel) {
+            this.footerInfoPanel.classList.toggle('open', this.ui.footerInfoOpen);
+            this.footerInfoPanel.setAttribute('aria-hidden', this.ui.footerInfoOpen ? 'false' : 'true');
+        }
+
+        if (this.imageInfo) {
+            this.imageInfo.classList.toggle('active', this.ui.footerInfoOpen);
+            this.imageInfo.setAttribute('aria-expanded', this.ui.footerInfoOpen ? 'true' : 'false');
+        }
+
+        if (this.ui.footerInfoOpen && this.status && typeof this.status.refreshFooterDetails === 'function') {
+            this.status.refreshFooterDetails();
+        }
+    }
+
+    toggleFooterInfoPanel(forceOpen = null) {
+        const next = forceOpen === null ? !this.ui.footerInfoOpen : !!forceOpen;
+        this.setFooterInfoOpen(next);
+    }
+
     positionAboutPopover() {
         if (!this.aboutPopover || !this.dropZone || !this.toolDock) return;
 
@@ -726,6 +786,11 @@ class ImageViewer {
             closed = true;
         }
 
+        if (this.ui.footerInfoOpen) {
+            this.setFooterInfoOpen(false);
+            closed = true;
+        }
+
         return closed;
     }
 
@@ -745,13 +810,23 @@ class ImageViewer {
         const dims = loadedVolume && loadedVolume.dimensions
             ? loadedVolume.dimensions
             : (this.volumeState && this.volumeState.dimensions);
+        const sourceDownsampled = !!(this.volumeState && this.volumeState.isSourceDownsampled);
 
         const dimsText = dims ? `${dims[0]}x${dims[1]}x${dims[2]}` : '--';
-        this.resolutionChipText.textContent = `Resolution: ${label} - ${dimsText}`;
+        const downsampleSuffix = sourceDownsampled ? ' (downsampled source)' : '';
+        this.resolutionChipText.textContent = `Resolution: ${label} - ${dimsText}${downsampleSuffix}`;
 
         const isLowOrMid = !!(loadedVolume && (loadedVolume.isLowRes || loadedVolume.isEnhanced));
+        const showWarning = isLowOrMid || sourceDownsampled;
         if (this.viewport3DChip) {
-            this.viewport3DChip.classList.toggle('alert', isLowOrMid);
+            this.viewport3DChip.classList.toggle('alert', showWarning);
+            this.viewport3DChip.title = sourceDownsampled
+                ? '3D rendering controls (source auto-downsampled)'
+                : '3D rendering controls';
+        }
+
+        if (this.status && typeof this.status.refreshFooterDetails === 'function') {
+            this.status.refreshFooterDetails();
         }
     }
 
@@ -799,13 +874,17 @@ class ImageViewer {
                 return;
             }
 
+            const tiffGroup = fileGroups.find(g => g.type === 'tiff');
+            if (tiffGroup) {
+                await this.loaders.tiff.load(tiffGroup);
+                return;
+            }
+
             // Process first remaining group (for now, handle one dataset at a time)
             const firstGroup = fileGroups[0];
 
             if (firstGroup.type === '3d-raw') {
                 await this.loaders.raw.load(firstGroup);
-            } else if (firstGroup.type === 'tiff') {
-                await this.loaders.tiff.load(firstGroup);
             } else if (firstGroup.type === '2d-image') {
                 await this.load2DImage(firstGroup);
             }
@@ -853,7 +932,10 @@ class ImageViewer {
             dataType: null,
             isStreaming: false,
             hasFullData: false,
-            lowResVolume: null
+            lowResVolume: null,
+            isSourceDownsampled: false,
+            sourceBytes: null,
+            loadedBytes: null
         };
     }
 
@@ -1070,7 +1152,11 @@ class ImageViewer {
                 dataType: info.dataType,
                 isStreaming: false,
                 hasFullData: true,
-                lowResVolume: null
+                lowResVolume: null,
+                sourceBytes: Number.isFinite(file.size) ? file.size : null,
+                loadedBytes: (volumeData && volumeData.data && Number.isFinite(volumeData.data.byteLength))
+                    ? volumeData.data.byteLength
+                    : null
             });
             this.update3DResolutionOptions('full');
 

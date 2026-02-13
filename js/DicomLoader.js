@@ -77,7 +77,7 @@ class DicomLoader {
                     seriesMap.set(seriesKey, {
                         type: 'dicom-series',
                         seriesUID: seriesKey,
-                        name: info.seriesDescription || seriesKey,
+                        name: this.buildSeriesDisplayName(info),
                         files: []
                     });
                 }
@@ -89,7 +89,41 @@ class DicomLoader {
         }
 
         seriesMap.forEach(value => results.push(value));
+        this.ensureUniqueSeriesNames(results);
         return results;
+    }
+
+    buildSeriesDisplayName(info) {
+        if (info && typeof info.seriesDescription === 'string') {
+            const description = info.seriesDescription.trim();
+            if (description && !/^fallback:/i.test(description)) {
+                return description;
+            }
+        }
+
+        const modality = (info && typeof info.modality === 'string' && info.modality.trim())
+            ? info.modality.trim()
+            : 'DICOM';
+
+        if (info && Number.isFinite(info.cols) && Number.isFinite(info.rows)) {
+            return `${modality} Series (${info.cols}x${info.rows})`;
+        }
+
+        return `${modality} Series`;
+    }
+
+    ensureUniqueSeriesNames(groups) {
+        if (!Array.isArray(groups) || groups.length === 0) return;
+        const seen = new Map();
+
+        for (const group of groups) {
+            const base = (group && typeof group.name === 'string' && group.name.trim())
+                ? group.name.trim()
+                : 'DICOM Series';
+            const count = seen.get(base) || 0;
+            seen.set(base, count + 1);
+            group.name = count === 0 ? base : `${base} #${count + 1}`;
+        }
     }
 
     buildFallbackSeriesKey(info) {
@@ -158,6 +192,372 @@ class DicomLoader {
         }
 
         return this.buildSeriesVolume(sliceInfos);
+    }
+
+    async loadSeriesProgressive(seriesGroup, callbacks = {}) {
+        if (!seriesGroup || !seriesGroup.files || seriesGroup.files.length === 0) {
+            throw new Error('No DICOM files provided');
+        }
+
+        const files = seriesGroup.files;
+        const sliceInfos = [];
+
+        if (callbacks.onProgress) {
+            callbacks.onProgress({ stage: 'metadata', progress: 0 });
+        }
+
+        for (let i = 0; i < files.length; i++) {
+            const info = await this.parseDicomFile(files[i], { headerOnly: true });
+            sliceInfos.push(info);
+
+            if (callbacks.onProgress) {
+                callbacks.onProgress({
+                    stage: 'metadata',
+                    progress: Math.round(((i + 1) / files.length) * 100)
+                });
+            }
+        }
+
+        const seriesLayout = this.buildSeriesLayout(sliceInfos);
+        const metadata = seriesLayout.metadata;
+        const manifests = seriesLayout.manifests;
+        const [nx, ny, nz] = metadata.dimensions;
+        const sliceSize = nx * ny;
+
+        const numBlocks = this.getProgressiveNumBlocks();
+        const downsampleScale = this.getProgressiveDownsampleScale();
+        const blockBoundaries = this.calculateBlockBoundaries(nz, numBlocks);
+
+        if (callbacks.onProgress) {
+            callbacks.onProgress({ stage: 'streaming', progress: 0 });
+        }
+
+        const lowResInfo = await this.createLowResFromManifests(
+            manifests,
+            metadata,
+            downsampleScale,
+            (percent) => {
+                if (callbacks.onProgress) {
+                    callbacks.onProgress({ stage: 'streaming', progress: percent });
+                }
+            }
+        );
+
+        const lowResVolume = {
+            dimensions: lowResInfo.lowResDims,
+            dataType: metadata.dataType,
+            spacing: metadata.spacing.map((s) => s * downsampleScale),
+            data: lowResInfo.lowResData,
+            min: lowResInfo.min,
+            max: lowResInfo.max,
+            isLowRes: true
+        };
+
+        const streamingThreshold = this.getStreamingThresholdBytes();
+        const estimatedFloatBytes = nx * ny * nz * 4;
+
+        if (estimatedFloatBytes > streamingThreshold) {
+            const progressiveData = new DicomStreamingVolumeData(metadata, manifests, blockBoundaries);
+            progressiveData.setLowResData(lowResVolume, lowResInfo.min, lowResInfo.max);
+
+            if (callbacks.onLowResReady) {
+                callbacks.onLowResReady(lowResVolume, progressiveData);
+            }
+
+            const loadOrder = this.getBlockLoadOrder(numBlocks);
+            for (let i = 0; i < loadOrder.length; i++) {
+                const blockIndex = loadOrder[i];
+                const zStart = blockBoundaries[blockIndex];
+                const zEnd = blockBoundaries[blockIndex + 1];
+
+                progressiveData.activateBlock(blockIndex);
+                if (callbacks.onBlockReady) {
+                    callbacks.onBlockReady(blockIndex, zStart, zEnd);
+                }
+
+                await this.yieldToUI();
+            }
+
+            progressiveData.markFullyLoaded();
+            if (callbacks.onAllBlocksReady) {
+                callbacks.onAllBlocksReady();
+            }
+            if (callbacks.onProgress) {
+                callbacks.onProgress({ stage: 'complete', progress: 100 });
+            }
+            return progressiveData;
+        }
+
+        const fullData = new Float32Array(sliceSize * nz);
+        const progressiveData = new ProgressiveVolumeData(metadata, fullData, blockBoundaries);
+        progressiveData.setLowResData(lowResVolume, lowResInfo.min, lowResInfo.max);
+
+        if (callbacks.onLowResReady) {
+            callbacks.onLowResReady(lowResVolume, progressiveData);
+        }
+
+        let min = Infinity;
+        let max = -Infinity;
+        const loadOrder = this.getBlockLoadOrder(numBlocks);
+
+        for (let i = 0; i < loadOrder.length; i++) {
+            const blockIndex = loadOrder[i];
+            const zStart = blockBoundaries[blockIndex];
+            const zEnd = blockBoundaries[blockIndex + 1];
+
+            for (let z = zStart; z < zEnd; z++) {
+                const scaled = await this.decodeManifestSlice(manifests[z]);
+                fullData.set(scaled, z * sliceSize);
+
+                for (let k = 0; k < scaled.length; k++) {
+                    const value = scaled[k];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+            }
+
+            progressiveData.activateBlock(blockIndex);
+            if (callbacks.onBlockReady) {
+                callbacks.onBlockReady(blockIndex, zStart, zEnd);
+            }
+
+            if (callbacks.onProgress) {
+                callbacks.onProgress({
+                    stage: 'loading',
+                    progress: Math.round(((i + 1) / loadOrder.length) * 100)
+                });
+            }
+
+            await this.yieldToUI();
+        }
+
+        progressiveData.min = Number.isFinite(min) ? min : lowResInfo.min;
+        progressiveData.max = Number.isFinite(max) ? max : lowResInfo.max;
+        progressiveData.markFullyLoaded();
+
+        if (callbacks.onAllBlocksReady) {
+            callbacks.onAllBlocksReady();
+        }
+        if (callbacks.onProgress) {
+            callbacks.onProgress({ stage: 'complete', progress: 100 });
+        }
+        return progressiveData;
+    }
+
+    buildSeriesLayout(sliceInfos) {
+        if (!sliceInfos || sliceInfos.length === 0) {
+            throw new Error('No DICOM slices parsed');
+        }
+
+        const ref = sliceInfos[0];
+        const rows = ref.rows;
+        const cols = ref.cols;
+
+        for (const info of sliceInfos) {
+            if (info.rows !== rows || info.cols !== cols) {
+                throw new Error('DICOM series has inconsistent slice dimensions');
+            }
+            if (info.bitsAllocated !== 8 && info.bitsAllocated !== 16) {
+                throw new Error(`Unsupported BitsAllocated: ${info.bitsAllocated}`);
+            }
+            if (info.bitsAllocated !== ref.bitsAllocated) {
+                throw new Error('DICOM series has inconsistent BitsAllocated values');
+            }
+            if (info.pixelRepresentation !== ref.pixelRepresentation) {
+                throw new Error('DICOM series has inconsistent pixel representation');
+            }
+            if (info.samplesPerPixel !== 1) {
+                throw new Error('Only single-sample (monochrome) DICOM is supported');
+            }
+            if (info.pixelDataOffset === null || info.pixelDataLength === null) {
+                throw new Error(`Missing pixel data offset for ${info.file ? info.file.name : 'slice'}`);
+            }
+        }
+
+        let manifests = [];
+        let spacing = null;
+        let description = ref.seriesDescription || 'DICOM Series';
+
+        if (sliceInfos.length === 1 && ref.numberOfFrames > 1) {
+            const frameCount = ref.numberOfFrames;
+            const bytesPerPixel = ref.bitsAllocated / 8;
+            const frameLengthBytes = rows * cols * bytesPerPixel;
+            const needed = frameLengthBytes * frameCount;
+
+            if (ref.pixelDataLength < needed) {
+                throw new Error('Multi-frame pixel data length mismatch');
+            }
+
+            manifests = new Array(frameCount);
+            for (let f = 0; f < frameCount; f++) {
+                manifests[f] = {
+                    file: ref.file,
+                    rows,
+                    cols,
+                    bitsAllocated: ref.bitsAllocated,
+                    pixelRepresentation: ref.pixelRepresentation,
+                    littleEndian: ref.littleEndian !== false,
+                    rescaleSlope: ref.rescaleSlope,
+                    rescaleIntercept: ref.rescaleIntercept,
+                    pixelDataOffset: ref.pixelDataOffset,
+                    frameOffsetBytes: f * frameLengthBytes,
+                    frameLengthBytes
+                };
+            }
+
+            spacing = this.computeSpacing([ref], ref);
+            description = ref.seriesDescription || 'DICOM Multi-frame';
+        } else {
+            const sorted = this.sortSlices(sliceInfos);
+
+            manifests = sorted.map((slice) => {
+                const bytesPerPixel = slice.bitsAllocated / 8;
+                const frameLengthBytes = rows * cols * bytesPerPixel;
+                const available = slice.pixelDataLength;
+                if (available < frameLengthBytes) {
+                    throw new Error(`Slice ${slice.file ? slice.file.name : ''} pixel data length mismatch`);
+                }
+
+                return {
+                    file: slice.file,
+                    rows,
+                    cols,
+                    bitsAllocated: slice.bitsAllocated,
+                    pixelRepresentation: slice.pixelRepresentation,
+                    littleEndian: slice.littleEndian !== false,
+                    rescaleSlope: slice.rescaleSlope,
+                    rescaleIntercept: slice.rescaleIntercept,
+                    pixelDataOffset: slice.pixelDataOffset,
+                    frameOffsetBytes: 0,
+                    frameLengthBytes
+                };
+            });
+
+            spacing = this.computeSpacing(sorted, ref);
+        }
+
+        const metadata = {
+            dimensions: [cols, rows, manifests.length],
+            dataType: 'float32',
+            spacing: spacing,
+            description: description
+        };
+
+        return { manifests, metadata };
+    }
+
+    async decodeManifestSlice(manifest) {
+        const start = manifest.pixelDataOffset + (manifest.frameOffsetBytes || 0);
+        const length = manifest.frameLengthBytes;
+        const buffer = await manifest.file.slice(start, start + length).arrayBuffer();
+        return DicomStreamingVolumeData.decodeSliceBuffer(buffer, manifest);
+    }
+
+    async createLowResFromManifests(manifests, metadata, scale, progressCallback = null) {
+        const [nx, ny, nz] = metadata.dimensions;
+        const dstNx = Math.ceil(nx / scale);
+        const dstNy = Math.ceil(ny / scale);
+        const dstNz = Math.ceil(nz / scale);
+
+        const dst = new Float32Array(dstNx * dstNy * dstNz);
+        let min = Infinity;
+        let max = -Infinity;
+
+        const reportInterval = Math.max(1, Math.floor(dstNz / 40));
+        if (progressCallback) {
+            progressCallback(0);
+        }
+
+        for (let dz = 0; dz < dstNz; dz++) {
+            const srcZ = Math.min(dz * scale, nz - 1);
+            const srcSlice = await this.decodeManifestSlice(manifests[srcZ]);
+
+            for (let dy = 0; dy < dstNy; dy++) {
+                const srcY = Math.min(dy * scale, ny - 1);
+                for (let dx = 0; dx < dstNx; dx++) {
+                    const srcX = Math.min(dx * scale, nx - 1);
+                    const value = srcSlice[srcX + srcY * nx];
+                    const dstIdx = dx + dy * dstNx + dz * dstNx * dstNy;
+                    dst[dstIdx] = value;
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+            }
+
+            if (progressCallback && (dz === 0 || dz === dstNz - 1 || ((dz + 1) % reportInterval === 0))) {
+                progressCallback(Math.round(((dz + 1) / dstNz) * 100));
+            }
+
+            if (dz % 8 === 0) {
+                await this.yieldToUI();
+            }
+        }
+
+        if (!Number.isFinite(min) || !Number.isFinite(max)) {
+            min = 0;
+            max = 1;
+        }
+
+        if (progressCallback) {
+            progressCallback(100);
+        }
+
+        return {
+            lowResData: dst,
+            lowResDims: [dstNx, dstNy, dstNz],
+            min,
+            max
+        };
+    }
+
+    getStreamingThresholdBytes() {
+        if (typeof WebGLUtils !== 'undefined' &&
+            typeof WebGLUtils.getVolumeStreamingThresholdBytes === 'function') {
+            return WebGLUtils.getVolumeStreamingThresholdBytes();
+        }
+        return 2 * 1024 * 1024 * 1024;
+    }
+
+    getProgressiveNumBlocks() {
+        if (typeof ViewerConfig !== 'undefined' &&
+            ViewerConfig.progressive &&
+            Number.isFinite(ViewerConfig.progressive.numBlocks)) {
+            return ViewerConfig.progressive.numBlocks;
+        }
+        return 5;
+    }
+
+    getProgressiveDownsampleScale() {
+        if (typeof ViewerConfig !== 'undefined' &&
+            ViewerConfig.progressive &&
+            Number.isFinite(ViewerConfig.progressive.downsampleScale)) {
+            return ViewerConfig.progressive.downsampleScale;
+        }
+        return 4;
+    }
+
+    calculateBlockBoundaries(nz, numBlocks) {
+        const boundaries = [0];
+        const blockSize = Math.ceil(nz / numBlocks);
+        for (let i = 1; i < numBlocks; i++) {
+            boundaries.push(Math.min(i * blockSize, nz));
+        }
+        boundaries.push(nz);
+        return boundaries;
+    }
+
+    getBlockLoadOrder(numBlocks) {
+        const center = Math.floor(numBlocks / 2);
+        const order = [center];
+        for (let offset = 1; offset <= center; offset++) {
+            if (center - offset >= 0) order.push(center - offset);
+            if (center + offset < numBlocks) order.push(center + offset);
+        }
+        return order;
+    }
+
+    yieldToUI() {
+        return new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     buildSeriesVolume(sliceInfos) {

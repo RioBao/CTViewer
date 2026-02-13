@@ -198,11 +198,50 @@ const WebGLUtils = {
      * Used for streaming mode and 3D full-res upload gating.
      */
     getVolumeStreamingThresholdBytes() {
-        if (typeof ViewerConfig !== 'undefined' &&
+        const configLimit = (typeof ViewerConfig !== 'undefined' &&
             ViewerConfig.limits &&
-            Number.isFinite(ViewerConfig.limits.streamingThresholdBytes)) {
-            return ViewerConfig.limits.streamingThresholdBytes;
+            Number.isFinite(ViewerConfig.limits.streamingThresholdBytes))
+            ? ViewerConfig.limits.streamingThresholdBytes
+            : 2 * 1024 * 1024 * 1024;
+
+        const deviceBytes = this.getDeviceMemoryBytes();
+        if (!deviceBytes) {
+            return configLimit;
         }
-        return 2 * 1024 * 1024 * 1024; // 2GB fallback
+
+        const minBytes = 512 * 1024 * 1024; // 512MB floor
+        const estimated = Math.round(deviceBytes * 0.25); // 25% of reported device RAM
+        return Math.max(minBytes, Math.min(configLimit, estimated));
+    },
+
+    /**
+     * Shared threshold for switching to progressive loading.
+     * Dynamic on capable browsers, conservative fallback otherwise.
+     */
+    getVolumeProgressiveThresholdBytes() {
+        const base = (typeof ViewerConfig !== 'undefined' &&
+            ViewerConfig.limits &&
+            Number.isFinite(ViewerConfig.limits.progressiveThresholdBytes))
+            ? ViewerConfig.limits.progressiveThresholdBytes
+            : 50 * 1024 * 1024;
+
+        const deviceBytes = this.getDeviceMemoryBytes();
+        if (!deviceBytes) {
+            return base;
+        }
+
+        const maxBytes = 256 * 1024 * 1024; // Avoid overly large direct-load threshold
+        const estimated = Math.round(deviceBytes / 64); // ~1.56% of reported device RAM
+        return Math.max(base, Math.min(maxBytes, estimated));
+    },
+
+    /**
+     * Browser-provided coarse device memory (bytes), if available.
+     */
+    getDeviceMemoryBytes() {
+        if (typeof navigator === 'undefined' || !Number.isFinite(navigator.deviceMemory) || navigator.deviceMemory <= 0) {
+            return null;
+        }
+        return navigator.deviceMemory * 1024 * 1024 * 1024;
     }
 };

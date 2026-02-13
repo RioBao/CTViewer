@@ -10,18 +10,20 @@ class RawVolumeLoader {
             viewer.resetVolumeState();
             viewer.status.showLoadingIndicator('Loading 3D volume...');
 
-            const PROGRESSIVE_THRESHOLD = (typeof ViewerConfig !== 'undefined' &&
-                ViewerConfig.limits &&
-                Number.isFinite(ViewerConfig.limits.progressiveThresholdBytes))
-                ? ViewerConfig.limits.progressiveThresholdBytes
+            const PROGRESSIVE_THRESHOLD = (typeof WebGLUtils !== 'undefined' &&
+                typeof WebGLUtils.getVolumeProgressiveThresholdBytes === 'function')
+                ? WebGLUtils.getVolumeProgressiveThresholdBytes()
                 : 50 * 1024 * 1024;
+            const sourceBytes = Number.isFinite(fileGroup.rawFile && fileGroup.rawFile.size)
+                ? fileGroup.rawFile.size
+                : null;
 
             const useProgressive = fileGroup.rawFile.size > PROGRESSIVE_THRESHOLD;
 
             if (useProgressive) {
-                await this.loadProgressive(fileGroup);
+                await this.loadProgressive(fileGroup, sourceBytes);
             } else {
-                await this.loadDirect(fileGroup);
+                await this.loadDirect(fileGroup, sourceBytes);
             }
 
         } catch (error) {
@@ -30,7 +32,7 @@ class RawVolumeLoader {
         }
     }
 
-    async loadDirect(fileGroup) {
+    async loadDirect(fileGroup, sourceBytes = null) {
         const viewer = this.viewer;
         const volumeData = await viewer.fileParser.load3DVolume(
             fileGroup.rawFile,
@@ -52,7 +54,11 @@ class RawVolumeLoader {
             dataType: info.dataType,
             isStreaming: false,
             hasFullData: true,
-            lowResVolume: null
+            lowResVolume: null,
+            sourceBytes,
+            loadedBytes: (volumeData && volumeData.data && Number.isFinite(volumeData.data.byteLength))
+                ? volumeData.data.byteLength
+                : null
         });
         viewer.update3DResolutionOptions('full');
 
@@ -69,7 +75,7 @@ class RawVolumeLoader {
         viewer.status.hideLoadingIndicator();
     }
 
-    async loadProgressive(fileGroup) {
+    async loadProgressive(fileGroup, sourceBytes = null) {
         const viewer = this.viewer;
         console.log('Using progressive loading for large volume');
 
@@ -124,7 +130,11 @@ class RawVolumeLoader {
                     dataType: progData.dataType,
                     isStreaming: !!progData.isStreaming,
                     hasFullData: false,
-                    lowResVolume: lowResVolume
+                    lowResVolume: lowResVolume,
+                    sourceBytes,
+                    loadedBytes: (lowResVolume && lowResVolume.data && Number.isFinite(lowResVolume.data.byteLength))
+                        ? lowResVolume.data.byteLength
+                        : null
                 });
                 viewer.status.updateVolumeUI({
                     name: fileGroup.name,
@@ -152,7 +162,11 @@ class RawVolumeLoader {
                 viewer.ctViewer.volumeData = newVolumeData;
                 viewer.updateVolumeState({
                     hasFullData: true,
-                    isStreaming: false
+                    isStreaming: false,
+                    sourceBytes,
+                    loadedBytes: (newVolumeData && newVolumeData.data && Number.isFinite(newVolumeData.data.byteLength))
+                        ? newVolumeData.data.byteLength
+                        : viewer.volumeState.loadedBytes
                 });
 
                 const schedule = (cb) => {
@@ -187,7 +201,13 @@ class RawVolumeLoader {
                     name: fileGroup.name,
                     dimensions: progressiveData.dimensions,
                     dataType: progressiveData.dataType,
-                    hasFullData: !viewer.volumeState.isStreaming
+                    hasFullData: !viewer.volumeState.isStreaming,
+                    sourceBytes,
+                    loadedBytes: (!viewer.volumeState.isStreaming &&
+                        progressiveData && progressiveData.data &&
+                        Number.isFinite(progressiveData.data.byteLength))
+                        ? progressiveData.data.byteLength
+                        : viewer.volumeState.loadedBytes
                 });
                 viewer.status.updateVolumeUI({
                     name: fileGroup.name,

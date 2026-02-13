@@ -22,7 +22,8 @@
         formats,
         limits: {
             streamingThresholdBytes: 2 * 1024 * 1024 * 1024,
-            progressiveThresholdBytes: 50 * 1024 * 1024
+            progressiveThresholdBytes: 50 * 1024 * 1024,
+            tiffSingleFileHardLimitBytes: 1024 * 1024 * 1024
         },
         progressive: {
             numBlocks: 5,

@@ -188,6 +188,10 @@
             <span id="imageInfo"></span>
             <span id="zoomLevel">100%</span>
         </div>
+        <div class="footer-info-panel" id="footerInfoPanel" aria-hidden="true" role="dialog" aria-label="Technical Dataset Details">
+            <div class="footer-info-title">Technical Details</div>
+            <div class="footer-info-grid" id="footerInfoGrid"></div>
+        </div>
     </div>
 
     <input type="file" id="fileInput" multiple accept="" style="display: none;">
@@ -199,9 +203,11 @@
     <script src="js/SliceRenderer.js"></script>
     <script src="js/ProgressiveVolumeData.js"></script>
     <script src="js/StreamingVolumeData.js"></script>
+    <script src="js/DicomStreamingVolumeData.js"></script>
     <script src="js/ProgressiveVolumeLoader.js"></script>
     <script src="js/DicomLoader.js"></script>
     <script src="js/NiftiLoader.js"></script>
+    <script src="js/TiffStreamReader.js"></script>
     <script src="js/FileParser.js"></script>
     <script src="js/MIPRaycaster.js"></script>
     <script src="js/WebGLUtils.js"></script>
