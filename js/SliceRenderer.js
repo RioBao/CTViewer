@@ -221,10 +221,10 @@ class SliceRenderer {
         if (!this.label) return;
 
         this.ctx.save();
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
         this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-        this.ctx.lineWidth = 3;
+        this.ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        this.ctx.lineWidth = 2.5;
 
         const text = this.label;
         const x = 10;

@@ -60,9 +60,9 @@ class CTViewer {
      */
     initialize(canvasXY, canvasXZ, canvasYZ, canvas3D) {
         // Create slice renderers
-        this.renderers.xy = new SliceRenderer(canvasXY, 'Axial (XY)');
-        this.renderers.xz = new SliceRenderer(canvasXZ, 'Coronal (XZ)');
-        this.renderers.yz = new SliceRenderer(canvasYZ, 'Sagittal (YZ)');
+        this.renderers.xy = new SliceRenderer(canvasXY, 'XY');
+        this.renderers.xz = new SliceRenderer(canvasXZ, 'XZ');
+        this.renderers.yz = new SliceRenderer(canvasYZ, 'YZ');
 
         // Create 3D renderer if canvas provided
         if (canvas3D) {

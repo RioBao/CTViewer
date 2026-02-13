@@ -41,6 +41,7 @@ class ImageViewer {
         this.histogramOverlay = document.getElementById('histogramOverlay');
         this.histogramGrip = document.getElementById('histogramGrip');
         this.histogramToggleBtn = document.getElementById('histogramToggleBtn');
+        this.histogramPinBtn = document.getElementById('histogramPinBtn');
         this.histogramCloseBtn = document.getElementById('histogramCloseBtn');
         this.sliceControls = document.getElementById('sliceControls');
 
@@ -78,6 +79,7 @@ class ImageViewer {
     createUIState() {
         return {
             histogramOpen: false,
+            histogramPinned: false,
             crosshairEnabled: false,
             threeDPanelOpen: false,
             toolDockDragging: false,
@@ -111,6 +113,14 @@ class ImageViewer {
             });
         }
 
+        if (this.histogramPinBtn) {
+            this.histogramPinBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleHistogramPin();
+            });
+        }
+
         if (this.histogramOverlay) {
             this.histogramOverlay.addEventListener('mousedown', (e) => e.stopPropagation());
         }
@@ -131,6 +141,7 @@ class ImageViewer {
         document.addEventListener('mousedown', (e) => {
             const target = e.target;
             if (this.ui.histogramOpen &&
+                !this.ui.histogramPinned &&
                 this.histogramOverlay &&
                 !this.histogramOverlay.contains(target) &&
                 this.histogramToggleBtn &&
@@ -469,6 +480,11 @@ class ImageViewer {
             this.histogramToggleBtn.classList.toggle('active', this.ui.histogramOpen);
         }
 
+        if (!this.ui.histogramOpen) {
+            this.ui.histogramPinned = false;
+        }
+        this.updateHistogramPinUI();
+
         if (this.ui.histogramOpen) {
             this.clampHistogramPosition();
             this.refreshHistogramOverlay();
@@ -478,6 +494,20 @@ class ImageViewer {
     toggleHistogramOverlay(forceOpen = null) {
         const next = forceOpen === null ? !this.ui.histogramOpen : !!forceOpen;
         this.setHistogramOpen(next);
+    }
+
+    toggleHistogramPin() {
+        if (!this.ui.histogramOpen) {
+            this.setHistogramOpen(true);
+        }
+        this.ui.histogramPinned = !this.ui.histogramPinned;
+        this.updateHistogramPinUI();
+    }
+
+    updateHistogramPinUI() {
+        if (!this.histogramPinBtn) return;
+        this.histogramPinBtn.classList.toggle('active', this.ui.histogramPinned);
+        this.histogramPinBtn.title = this.ui.histogramPinned ? 'Unpin histogram' : 'Pin histogram';
     }
 
     refreshHistogramOverlay() {
@@ -493,7 +523,7 @@ class ImageViewer {
     closeTransientOverlays() {
         let closed = false;
 
-        if (this.ui.histogramOpen) {
+        if (this.ui.histogramOpen && !this.ui.histogramPinned) {
             this.setHistogramOpen(false);
             closed = true;
         }
