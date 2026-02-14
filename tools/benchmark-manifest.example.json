@@ -1,0 +1,25 @@
+{
+  "datasets": [
+    {
+      "name": "raw-example",
+      "files": [
+        "D:/3D data/BGA/perfekt.raw",
+        "D:/3D data/BGA/perfekt.raw.volumeinfo"
+      ]
+    },
+    {
+      "name": "nifti-example",
+      "files": [
+        "D:/3D data/CT_Abdo.nii/CT_Abdo.nii"
+      ]
+    },
+    {
+      "name": "dicom-folder-example",
+      "folder": "D:/3D data/DICOM_SERIES_1",
+      "extensions": [
+        ".dcm",
+        ".ima"
+      ]
+    }
+  ]
+}

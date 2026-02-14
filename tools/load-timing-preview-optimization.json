@@ -1,0 +1,50 @@
+﻿{
+    "generatedAt":  "2026-02-14T13:09:35.5280697+01:00",
+    "change":  "Adaptive preview downsample scale based on volume size (previewTargetVoxels=12M)",
+    "results":  [
+                    {
+                        "name":  "perfekt.raw",
+                        "previewBaseSec":  3.594,
+                        "previewNewSec":  1.032,
+                        "previewGainPct":  71.3,
+                        "finalBaseSec":  3.852,
+                        "finalNewSec":  1.278,
+                        "finalGainPct":  66.8
+                    },
+                    {
+                        "name":  "50kv.tif",
+                        "previewBaseSec":  6.22,
+                        "previewNewSec":  5.67,
+                        "previewGainPct":  8.8,
+                        "finalBaseSec":  6.356,
+                        "finalNewSec":  5.744,
+                        "finalGainPct":  9.6
+                    },
+                    {
+                        "name":  "iguana.nii",
+                        "previewBaseSec":  4.984,
+                        "previewNewSec":  5.144,
+                        "previewGainPct":  -3.2,
+                        "finalBaseSec":  5.100,
+                        "finalNewSec":  5.280,
+                        "finalGainPct":  -3.5
+                    }
+                ],
+    "files":  [
+                  {
+                      "name":  "perfekt.raw",
+                      "baseline":  "tools/load-timing-results-raw.json",
+                      "optimized":  "tools/load-timing-results-raw-previewopt.json"
+                  },
+                  {
+                      "name":  "50kv.tif",
+                      "baseline":  "tools/load-timing-results-tiff.json",
+                      "optimized":  "tools/load-timing-results-tiff-previewopt.json"
+                  },
+                  {
+                      "name":  "iguana.nii",
+                      "baseline":  "tools/load-timing-results-nifti.json",
+                      "optimized":  "tools/load-timing-results-nifti-previewopt2.json"
+                  }
+              ]
+}

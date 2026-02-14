@@ -1,0 +1,127 @@
+{
+  "startedAt": "2026-02-14T11:02:35.652Z",
+  "viewerUrl": "http://127.0.0.1:4173/index.html",
+  "options": {
+    "runs": 5,
+    "warmup": 1,
+    "timeoutMs": 600000,
+    "browser": "chrome",
+    "headless": true
+  },
+  "datasets": [
+    {
+      "name": "CT_Abdo.nii",
+      "fileCount": 1,
+      "files": [
+        "D:\\3D data\\CT_Abdo.nii\\CT_Abdo.nii"
+      ],
+      "runs": [
+        {
+          "run": 1,
+          "format": "NIfTI",
+          "name": "CT_Abdo.nii",
+          "previewSeconds": null,
+          "finalSeconds": 0.96,
+          "details": "direct",
+          "logs": [
+            "[log] Using WebGL2 for 3D rendering",
+            "[log] WebGL MIP shader program created successfully",
+            "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "[log] WebGL: Volume texture uploaded 255x178x256 (11MB as R8)",
+            "[log] WebGL: Occupancy grid 32x23x32 (block=8)",
+            "[log] %c3D Renderer: WebGL%c | Quality: medium | Resolution: 1024px | Steps: 800 color: #4CAF50; font-weight: bold color: inherit",
+            "[log]   GPU Max 3D Texture Size: 2048",
+            "[log]   Volume: 255×178×256 (11.1MB GPU memory)",
+            "[log] [LoadTiming][NIfTI] Final ready for \"CT_Abdo.nii\" in 0.96s (direct)"
+          ]
+        },
+        {
+          "run": 2,
+          "format": "NIfTI",
+          "name": "CT_Abdo.nii",
+          "previewSeconds": null,
+          "finalSeconds": 0.96,
+          "details": "direct",
+          "logs": [
+            "[log] Using WebGL2 for 3D rendering",
+            "[log] WebGL MIP shader program created successfully",
+            "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "[log] WebGL: Volume texture uploaded 255x178x256 (11MB as R8)",
+            "[log] WebGL: Occupancy grid 32x23x32 (block=8)",
+            "[log] %c3D Renderer: WebGL%c | Quality: medium | Resolution: 1024px | Steps: 800 color: #4CAF50; font-weight: bold color: inherit",
+            "[log]   GPU Max 3D Texture Size: 2048",
+            "[log]   Volume: 255×178×256 (11.1MB GPU memory)",
+            "[log] [LoadTiming][NIfTI] Final ready for \"CT_Abdo.nii\" in 0.96s (direct)"
+          ]
+        },
+        {
+          "run": 3,
+          "format": "NIfTI",
+          "name": "CT_Abdo.nii",
+          "previewSeconds": null,
+          "finalSeconds": 0.98,
+          "details": "direct",
+          "logs": [
+            "[log] Using WebGL2 for 3D rendering",
+            "[log] WebGL MIP shader program created successfully",
+            "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "[log] WebGL: Volume texture uploaded 255x178x256 (11MB as R8)",
+            "[log] WebGL: Occupancy grid 32x23x32 (block=8)",
+            "[log] %c3D Renderer: WebGL%c | Quality: medium | Resolution: 1024px | Steps: 800 color: #4CAF50; font-weight: bold color: inherit",
+            "[log]   GPU Max 3D Texture Size: 2048",
+            "[log]   Volume: 255×178×256 (11.1MB GPU memory)",
+            "[log] [LoadTiming][NIfTI] Final ready for \"CT_Abdo.nii\" in 0.98s (direct)"
+          ]
+        },
+        {
+          "run": 4,
+          "format": "NIfTI",
+          "name": "CT_Abdo.nii",
+          "previewSeconds": null,
+          "finalSeconds": 0.94,
+          "details": "direct",
+          "logs": [
+            "[log] Using WebGL2 for 3D rendering",
+            "[log] WebGL MIP shader program created successfully",
+            "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "[log] WebGL: Volume texture uploaded 255x178x256 (11MB as R8)",
+            "[log] WebGL: Occupancy grid 32x23x32 (block=8)",
+            "[log] %c3D Renderer: WebGL%c | Quality: medium | Resolution: 1024px | Steps: 800 color: #4CAF50; font-weight: bold color: inherit",
+            "[log]   GPU Max 3D Texture Size: 2048",
+            "[log]   Volume: 255×178×256 (11.1MB GPU memory)",
+            "[log] [LoadTiming][NIfTI] Final ready for \"CT_Abdo.nii\" in 0.94s (direct)"
+          ]
+        },
+        {
+          "run": 5,
+          "format": "NIfTI",
+          "name": "CT_Abdo.nii",
+          "previewSeconds": null,
+          "finalSeconds": 0.93,
+          "details": "direct",
+          "logs": [
+            "[log] Using WebGL2 for 3D rendering",
+            "[log] WebGL MIP shader program created successfully",
+            "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "[log] WebGL: Volume texture uploaded 255x178x256 (11MB as R8)",
+            "[log] WebGL: Occupancy grid 32x23x32 (block=8)",
+            "[log] %c3D Renderer: WebGL%c | Quality: medium | Resolution: 1024px | Steps: 800 color: #4CAF50; font-weight: bold color: inherit",
+            "[log]   GPU Max 3D Texture Size: 2048",
+            "[log]   Volume: 255×178×256 (11.1MB GPU memory)",
+            "[log] [LoadTiming][NIfTI] Final ready for \"CT_Abdo.nii\" in 0.93s (direct)"
+          ]
+        }
+      ],
+      "summary": {
+        "previewSeconds": null,
+        "finalSeconds": {
+          "count": 5,
+          "min": 0.93,
+          "max": 0.98,
+          "mean": 0.954,
+          "median": 0.96
+        }
+      }
+    }
+  ]
+}

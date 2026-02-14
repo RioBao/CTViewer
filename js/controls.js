@@ -113,6 +113,12 @@ class ViewerControls {
                     this.toggleHistogram();
                 }
                 break;
+            case 'a':
+                if (!e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.toggleRoiMode();
+                }
+                break;
             case 'c':
                 if (!e.ctrlKey && !e.metaKey) {
                     e.preventDefault();

@@ -1778,8 +1778,29 @@ class FileParser {
      * @param {File} file
      * @returns {Promise<VolumeData>}
      */
-    async loadNifti(file) {
-        return this.niftiLoader.loadNifti(file);
+    async loadNifti(file, progressCallback = null) {
+        return this.niftiLoader.loadNifti(file, progressCallback);
+    }
+
+    /**
+     * Parse NIfTI header only (no full voxel decode)
+     * @param {File} file
+     * @returns {Promise<object>}
+     */
+    async loadNiftiHeader(file) {
+        return this.niftiLoader.parseNiftiHeaderFromFile(file);
+    }
+
+    /**
+     * Create low-res NIfTI preview directly from file bytes
+     * @param {File} file
+     * @param {object} header
+     * @param {number} downsampleScale
+     * @param {function|null} progressCallback
+     * @returns {Promise<object>}
+     */
+    async createNiftiLowResPreview(file, header, downsampleScale = 4, progressCallback = null) {
+        return this.niftiLoader.createLowResPreviewFromFile(file, header, downsampleScale, progressCallback);
     }
 
     /**

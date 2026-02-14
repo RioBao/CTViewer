@@ -1,0 +1,6 @@
+"dataset","run","format","name","preview_seconds","final_seconds","final_details"
+"iguana.nii","1","NIfTI","iguana.nii","4.79","4.91","full=380x535x308"
+"iguana.nii","2","NIfTI","iguana.nii","4.86","4.94","full=380x535x308"
+"iguana.nii","3","NIfTI","iguana.nii","4.84","4.92","full=380x535x308"
+"iguana.nii","4","NIfTI","iguana.nii","4.8","4.92","full=380x535x308"
+"iguana.nii","5","NIfTI","iguana.nii","5.25","5.34","full=380x535x308"

@@ -377,6 +377,7 @@ class DicomLoader {
         let manifests = [];
         let spacing = null;
         let description = ref.seriesDescription || 'DICOM Series';
+        let orientationInfo = this.buildDicomOrientationInfo(ref, sliceInfos);
 
         if (sliceInfos.length === 1 && ref.numberOfFrames > 1) {
             const frameCount = ref.numberOfFrames;
@@ -390,6 +391,7 @@ class DicomLoader {
 
             manifests = new Array(frameCount);
             for (let f = 0; f < frameCount; f++) {
+                const sourceFrame = orientationInfo.flipZ ? (frameCount - 1 - f) : f;
                 manifests[f] = {
                     file: ref.file,
                     rows,
@@ -400,8 +402,10 @@ class DicomLoader {
                     rescaleSlope: ref.rescaleSlope,
                     rescaleIntercept: ref.rescaleIntercept,
                     pixelDataOffset: ref.pixelDataOffset,
-                    frameOffsetBytes: f * frameLengthBytes,
-                    frameLengthBytes
+                    frameOffsetBytes: sourceFrame * frameLengthBytes,
+                    frameLengthBytes,
+                    flipX: orientationInfo.flipX,
+                    flipY: orientationInfo.flipY
                 };
             }
 
@@ -409,8 +413,10 @@ class DicomLoader {
             description = ref.seriesDescription || 'DICOM Multi-frame';
         } else {
             const sorted = this.sortSlices(sliceInfos);
+            orientationInfo = this.buildDicomOrientationInfo(sorted[0] || ref, sorted);
+            const orderedSlices = orientationInfo.flipZ ? sorted.slice().reverse() : sorted;
 
-            manifests = sorted.map((slice) => {
+            manifests = orderedSlices.map((slice) => {
                 const bytesPerPixel = slice.bitsAllocated / 8;
                 const frameLengthBytes = rows * cols * bytesPerPixel;
                 const available = slice.pixelDataLength;
@@ -429,7 +435,9 @@ class DicomLoader {
                     rescaleIntercept: slice.rescaleIntercept,
                     pixelDataOffset: slice.pixelDataOffset,
                     frameOffsetBytes: 0,
-                    frameLengthBytes
+                    frameLengthBytes,
+                    flipX: orientationInfo.flipX,
+                    flipY: orientationInfo.flipY
                 };
             });
 
@@ -440,7 +448,8 @@ class DicomLoader {
             dimensions: [cols, rows, manifests.length],
             dataType: 'float32',
             spacing: spacing,
-            description: description
+            description: description,
+            dicomOrientation: orientationInfo.panelInfo
         };
 
         return { manifests, metadata };
@@ -577,6 +586,8 @@ class DicomLoader {
         }
 
         const sorted = this.sortSlices(sliceInfos);
+        const orientationInfo = this.buildDicomOrientationInfo(sorted[0] || ref, sorted);
+        const orderedSlices = orientationInfo.flipZ ? sorted.slice().reverse() : sorted;
         const numSlices = sorted.length;
         const volumeData = new Float32Array(sliceSize * numSlices);
 
@@ -584,8 +595,9 @@ class DicomLoader {
         let max = -Infinity;
 
         for (let z = 0; z < numSlices; z++) {
-            const slice = sorted[z];
-            const scaled = this.applyRescale(slice.pixelData, slice.rescaleSlope, slice.rescaleIntercept);
+            const slice = orderedSlices[z];
+            const scaledRaw = this.applyRescale(slice.pixelData, slice.rescaleSlope, slice.rescaleIntercept);
+            const scaled = this.applyInPlaneFlips(scaledRaw, cols, rows, orientationInfo.flipX, orientationInfo.flipY);
 
             volumeData.set(scaled, z * sliceSize);
 
@@ -603,7 +615,8 @@ class DicomLoader {
             spacing: spacing,
             min: min,
             max: max,
-            description: ref.seriesDescription || 'DICOM Series'
+            description: ref.seriesDescription || 'DICOM Series',
+            dicomOrientation: orientationInfo.panelInfo
         };
 
         return new VolumeData(volumeData.buffer, metadata);
@@ -614,6 +627,7 @@ class DicomLoader {
         const cols = info.cols;
         const frames = info.numberOfFrames;
         const sliceSize = rows * cols;
+        const orientationInfo = this.buildDicomOrientationInfo(info, [info]);
 
         const expectedLength = sliceSize * frames;
         if (info.pixelData.length < expectedLength) {
@@ -625,10 +639,12 @@ class DicomLoader {
         let max = -Infinity;
 
         for (let f = 0; f < frames; f++) {
-            const frameOffset = f * sliceSize;
+            const sourceFrame = orientationInfo.flipZ ? (frames - 1 - f) : f;
+            const frameOffset = sourceFrame * sliceSize;
             const frameView = info.pixelData.subarray(frameOffset, frameOffset + sliceSize);
-            const scaled = this.applyRescale(frameView, info.rescaleSlope, info.rescaleIntercept);
-            volumeData.set(scaled, frameOffset);
+            const scaledRaw = this.applyRescale(frameView, info.rescaleSlope, info.rescaleIntercept);
+            const scaled = this.applyInPlaneFlips(scaledRaw, cols, rows, orientationInfo.flipX, orientationInfo.flipY);
+            volumeData.set(scaled, f * sliceSize);
 
             for (let i = 0; i < scaled.length; i++) {
                 const value = scaled[i];
@@ -644,7 +660,8 @@ class DicomLoader {
             spacing: spacing,
             min: min,
             max: max,
-            description: info.seriesDescription || 'DICOM Multi-frame'
+            description: info.seriesDescription || 'DICOM Multi-frame',
+            dicomOrientation: orientationInfo.panelInfo
         };
 
         return new VolumeData(volumeData.buffer, metadata);
@@ -657,6 +674,28 @@ class DicomLoader {
 
         for (let idx = 0; idx < data.length; idx++) {
             out[idx] = data[idx] * s + i;
+        }
+
+        return out;
+    }
+
+    applyInPlaneFlips(sliceData, width, height, flipX, flipY) {
+        if (!flipX && !flipY) {
+            return sliceData;
+        }
+
+        const out = new Float32Array(sliceData.length);
+        const maxX = width - 1;
+        const maxY = height - 1;
+
+        for (let y = 0; y < height; y++) {
+            const srcY = flipY ? (maxY - y) : y;
+            const dstRow = y * width;
+            const srcRow = srcY * width;
+            for (let x = 0; x < width; x++) {
+                const srcX = flipX ? (maxX - x) : x;
+                out[dstRow + x] = sliceData[srcRow + srcX];
+            }
         }
 
         return out;
@@ -755,6 +794,123 @@ class DicomLoader {
 
     dot(a, b) {
         return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    getDisplayConventionSigns() {
+        // Align with viewer's screen convention (canvas Y grows downward).
+        return [1, -1, -1];
+    }
+
+    buildDicomOrientationInfo(ref, sortedSlices = null) {
+        const fallbackPerm = [0, 1, 2];
+        const fallbackSigns = [1, 1, 1];
+        let source = 'none';
+        let permutation = fallbackPerm.slice();
+        let baseSigns = fallbackSigns.slice();
+
+        if (ref && Array.isArray(ref.imageOrientation) && ref.imageOrientation.length === 6) {
+            const row = ref.imageOrientation.slice(0, 3);
+            const col = ref.imageOrientation.slice(3, 6);
+            const normal = this.computeNormal(ref.imageOrientation);
+            const matrix = [
+                [row[0], col[0], normal[0]],
+                [row[1], col[1], normal[1]],
+                [row[2], col[2], normal[2]]
+            ];
+            const map = this.deriveAxisMapFromMatrix(matrix);
+            if (map) {
+                source = 'iop';
+                permutation = map.permutation;
+                baseSigns = map.signs;
+            }
+        }
+
+        const displaySigns = this.getDisplayConventionSigns();
+        const effectiveSigns = [
+            baseSigns[0] * displaySigns[0],
+            baseSigns[1] * displaySigns[1],
+            baseSigns[2] * displaySigns[2]
+        ];
+
+        // Keep data layout [x=cols,y=rows,z=slices] for streaming compatibility.
+        // Map derived signs back to source axes and apply only flips.
+        const sourceSigns = [1, 1, 1];
+        for (let outAxis = 0; outAxis < 3; outAxis++) {
+            const inAxis = permutation[outAxis];
+            sourceSigns[inAxis] = effectiveSigns[outAxis];
+        }
+
+        const flipX = sourceSigns[0] < 0;
+        const flipY = sourceSigns[1] < 0;
+        const flipZ = sourceSigns[2] < 0;
+        const permutationApplied = permutation[0] === 0 && permutation[1] === 1 && permutation[2] === 2;
+        const applied = flipX || flipY || flipZ;
+
+        return {
+            flipX,
+            flipY,
+            flipZ,
+            panelInfo: {
+                modality: 'dicom',
+                source,
+                permutation: permutation.slice(),
+                signs: effectiveSigns,
+                affinePermutation: permutation.slice(),
+                affineSigns: baseSigns.slice(),
+                displaySigns: displaySigns.slice(),
+                applied,
+                permutationApplied
+            }
+        };
+    }
+
+    deriveAxisMapFromMatrix(matrix) {
+        const norms = this.getColumnNorms(matrix);
+        if (norms.some((v) => !Number.isFinite(v) || v <= 0)) return null;
+
+        const normalized = [
+            [matrix[0][0] / norms[0], matrix[0][1] / norms[1], matrix[0][2] / norms[2]],
+            [matrix[1][0] / norms[0], matrix[1][1] / norms[1], matrix[1][2] / norms[2]],
+            [matrix[2][0] / norms[0], matrix[2][1] / norms[1], matrix[2][2] / norms[2]]
+        ];
+
+        const permutations = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0]
+        ];
+
+        let bestPerm = permutations[0];
+        let bestScore = -Infinity;
+        for (const perm of permutations) {
+            const score =
+                Math.abs(normalized[0][perm[0]]) +
+                Math.abs(normalized[1][perm[1]]) +
+                Math.abs(normalized[2][perm[2]]);
+            if (score > bestScore) {
+                bestScore = score;
+                bestPerm = perm;
+            }
+        }
+
+        return {
+            permutation: bestPerm.slice(),
+            signs: [
+                normalized[0][bestPerm[0]] >= 0 ? 1 : -1,
+                normalized[1][bestPerm[1]] >= 0 ? 1 : -1,
+                normalized[2][bestPerm[2]] >= 0 ? 1 : -1
+            ]
+        };
+    }
+
+    getColumnNorms(matrix) {
+        const c0 = Math.hypot(matrix[0][0], matrix[1][0], matrix[2][0]);
+        const c1 = Math.hypot(matrix[0][1], matrix[1][1], matrix[2][1]);
+        const c2 = Math.hypot(matrix[0][2], matrix[1][2], matrix[2][2]);
+        return [c0, c1, c2];
     }
 
     async parseDicomFile(file, options = {}) {

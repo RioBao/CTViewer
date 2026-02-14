@@ -27,6 +27,8 @@ class DicomStreamingVolumeData extends StreamingVolumeData {
             ? 1
             : manifest.rescaleSlope;
         const intercept = manifest.rescaleIntercept || 0;
+        const flipX = manifest.flipX === true;
+        const flipY = manifest.flipY === true;
 
         let src = null;
         if (bitsAllocated === 8) {
@@ -49,9 +51,28 @@ class DicomStreamingVolumeData extends StreamingVolumeData {
 
         const out = new Float32Array(expected);
         const len = Math.min(expected, src.length);
-        for (let i = 0; i < len; i++) {
-            out[i] = src[i] * slope + intercept;
+        if (!flipX && !flipY) {
+            for (let i = 0; i < len; i++) {
+                out[i] = src[i] * slope + intercept;
+            }
+            return out;
         }
+
+        const maxX = cols - 1;
+        const maxY = rows - 1;
+        for (let y = 0; y < rows; y++) {
+            const srcY = flipY ? (maxY - y) : y;
+            const dstRow = y * cols;
+            const srcRow = srcY * cols;
+            for (let x = 0; x < cols; x++) {
+                const srcX = flipX ? (maxX - x) : x;
+                const srcIdx = srcRow + srcX;
+                if (srcIdx < len) {
+                    out[dstRow + x] = src[srcIdx] * slope + intercept;
+                }
+            }
+        }
+
         return out;
     }
 

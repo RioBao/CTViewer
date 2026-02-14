@@ -3,8 +3,31 @@ class TiffVolumeLoader {
         this.viewer = viewer;
     }
 
+    nowMs() {
+        return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+    }
+
+    formatSeconds(ms) {
+        return `${(ms / 1000).toFixed(2)}s`;
+    }
+
+    logPreviewReady(name, startMs, details = '') {
+        const elapsed = this.nowMs() - startMs;
+        const suffix = details ? ` (${details})` : '';
+        console.log(`[LoadTiming][TIFF] Preview ready for "${name}" in ${this.formatSeconds(elapsed)}${suffix}`);
+    }
+
+    logFinalReady(name, startMs, details = '') {
+        const elapsed = this.nowMs() - startMs;
+        const suffix = details ? ` (${details})` : '';
+        console.log(`[LoadTiming][TIFF] Final ready for "${name}" in ${this.formatSeconds(elapsed)}${suffix}`);
+    }
+
     async load(fileGroup) {
         const viewer = this.viewer;
+        const loadStartMs = this.nowMs();
         try {
             viewer.reset3DResolutionCache();
             viewer.resetVolumeState();
@@ -51,9 +74,9 @@ class TiffVolumeLoader {
             const is3D = volumeData && volumeData.dimensions && volumeData.dimensions[2] > 1;
 
             if (is3D && volumeBytes > PROGRESSIVE_THRESHOLD) {
-                await this.loadProgressive(fileGroup, volumeData, isSourceDownsampled, sourceBytes, fullLoadedBytes);
+                await this.loadProgressive(fileGroup, volumeData, isSourceDownsampled, sourceBytes, fullLoadedBytes, loadStartMs);
             } else {
-                await this.loadDirect(fileGroup, volumeData, isSourceDownsampled, sourceBytes, fullLoadedBytes);
+                await this.loadDirect(fileGroup, volumeData, isSourceDownsampled, sourceBytes, fullLoadedBytes, loadStartMs);
             }
 
         } catch (error) {
@@ -69,8 +92,9 @@ class TiffVolumeLoader {
         }
     }
 
-    async loadDirect(fileGroup, volumeData, isSourceDownsampled = false, sourceBytes = null, loadedBytes = null) {
+    async loadDirect(fileGroup, volumeData, isSourceDownsampled = false, sourceBytes = null, loadedBytes = null, loadStartMs = null) {
         const viewer = this.viewer;
+        const startMs = Number.isFinite(loadStartMs) ? loadStartMs : this.nowMs();
         viewer.switchToCTMode();
 
         const info = viewer.ctViewer.loadVolume(volumeData);
@@ -86,6 +110,9 @@ class TiffVolumeLoader {
             loadedBytes
         });
         viewer.update3DResolutionOptions('full');
+        viewer.applySmart3DResolutionDefault().catch((error) => {
+            console.warn('Auto 3D resolution selection failed:', error);
+        });
 
         if (viewer.histogram) {
             viewer.histogram.setVolume(volumeData);
@@ -96,12 +123,14 @@ class TiffVolumeLoader {
             dimensions: info.dimensions,
             label: info.dataType
         });
+        this.logFinalReady(fileGroup.name, startMs, 'direct');
 
         viewer.status.hideLoadingIndicator();
     }
 
-    async loadProgressive(fileGroup, volumeData, isSourceDownsampled = false, sourceBytes = null, fullLoadedBytes = null) {
+    async loadProgressive(fileGroup, volumeData, isSourceDownsampled = false, sourceBytes = null, fullLoadedBytes = null, loadStartMs = null) {
         const viewer = this.viewer;
+        const startMs = Number.isFinite(loadStartMs) ? loadStartMs : this.nowMs();
         viewer.switchToCTMode();
 
         let progressiveData = null;
@@ -147,6 +176,7 @@ class TiffVolumeLoader {
                 viewer.update3DResolutionOptions('low');
                 viewer.status.hideLoadingIndicator();
                 viewer.ctViewer.handleLowResReady(lowResVolume);
+                this.logPreviewReady(fileGroup.name, startMs, `low=${lowResVolume.dimensions.join('x')}`);
             },
             onBlockReady: (blockIndex, zStart, zEnd) => {
                 viewer.ctViewer.handleBlockReady(blockIndex, zStart, zEnd);
@@ -172,6 +202,10 @@ class TiffVolumeLoader {
 
                 viewer.ctViewer.handleAllBlocksReady();
                 viewer.update3DResolutionOptions();
+                viewer.applySmart3DResolutionDefault().catch((error) => {
+                    console.warn('Auto 3D resolution selection failed:', error);
+                });
+                this.logFinalReady(fileGroup.name, startMs, `full=${progressiveData.dimensions.join('x')}`);
             }
         };
 

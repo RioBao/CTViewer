@@ -1184,6 +1184,7 @@ class ImageViewer {
             hasFullData: false,
             lowResVolume: null,
             isSourceDownsampled: false,
+            orientationInfo: null,
             sourceBytes: null,
             loadedBytes: null
         };
@@ -1306,6 +1307,75 @@ class ImageViewer {
         }
 
         this.update3DStatusChip();
+    }
+
+    getDataTypeBytes(dataType) {
+        const type = String(dataType || '').toLowerCase();
+        if (type === 'uint8' || type === 'int8') return 1;
+        if (type === 'uint16' || type === 'int16') return 2;
+        return 4;
+    }
+
+    getAutoMidResolutionMaxBytes() {
+        const fallback = 160 * 1024 * 1024; // 160MB
+        const maxTarget = 384 * 1024 * 1024; // 384MB
+        if (typeof navigator !== 'undefined' && Number.isFinite(navigator.deviceMemory) && navigator.deviceMemory > 0) {
+            const deviceBytes = navigator.deviceMemory * 1024 * 1024 * 1024;
+            const estimated = Math.round(deviceBytes / 48); // ~2% of system memory
+            return Math.max(fallback, Math.min(maxTarget, estimated));
+        }
+        return fallback;
+    }
+
+    shouldPreferMidResolutionBySize() {
+        const state = this.volumeState || this.createVolumeState();
+        if (!state || state.isStreaming || !state.hasFullData) return false;
+        if (!Array.isArray(state.dimensions) || state.dimensions.length !== 3) return false;
+
+        const [nx, ny, nz] = state.dimensions;
+        if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz) || nx <= 0 || ny <= 0 || nz <= 1) {
+            return false;
+        }
+
+        const midNx = Math.ceil(nx / 2);
+        const midNy = Math.ceil(ny / 2);
+        const midNz = Math.ceil(nz / 2);
+        const bytesPerVoxel = this.getDataTypeBytes(state.dataType);
+        const estimatedMidBytes = midNx * midNy * midNz * bytesPerVoxel;
+
+        return estimatedMidBytes <= this.getAutoMidResolutionMaxBytes();
+    }
+
+    resolveSmartDefault3DResolution() {
+        const select = this.resolution3DSelect;
+        if (!select) return 'low';
+
+        const lowOption = select.querySelector('option[value="low"]');
+        const midOption = select.querySelector('option[value="mid"]');
+        if (!lowOption || lowOption.disabled) return 'low';
+
+        if (midOption && !midOption.disabled && this.shouldPreferMidResolutionBySize()) {
+            return 'mid';
+        }
+
+        return 'low';
+    }
+
+    async applySmart3DResolutionDefault(force = false) {
+        const select = this.resolution3DSelect;
+        if (!select) return;
+
+        if (!force && select.value !== 'low') {
+            return;
+        }
+
+        const desired = this.resolveSmartDefault3DResolution();
+        if (!desired || desired === select.value) {
+            return;
+        }
+
+        select.value = desired;
+        await this.set3DResolution(desired);
     }
 
     async set3DResolution(value) {

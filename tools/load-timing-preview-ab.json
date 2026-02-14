@@ -1,0 +1,10 @@
+﻿{
+    "generatedAt":  "2026-02-14T13:12:05.0900026+01:00",
+    "dataset":  "perfekt.raw",
+    "control":  "tools/load-timing-results-raw-control-scale4.json",
+    "adaptive":  "tools/load-timing-results-raw-adaptive-scale8-ab.json",
+    "controlScale":  4,
+    "adaptiveScale":  8,
+    "previewGainPct":  80.3,
+    "finalGainPct":  76.7
+}

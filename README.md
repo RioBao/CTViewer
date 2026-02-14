@@ -1,4 +1,4 @@
-# ⚡ Instant Industrial CT Viewer (WebGL)
+# ⚡ VXL View - Instant Industrial CT Viewer
 
 Zero-install, browser-based 3D volume inspection for industrial CT data.
 
@@ -36,6 +36,7 @@ A lightweight WebGL-based 3D volume renderer that runs entirely in the browser.
 - No plugins  
 - Works on laptops and tablets  
 - Optimized for fast first render  
+- Streaming enabled for large volumes
 
 Built specifically for **industrial inspection workflows**.
 
@@ -50,7 +51,6 @@ Demo includes:
 - Opening a volume  
 - Smooth orbit interaction  
 - Slice inspection mode  
-- Transfer function adjustment  
 - Stable real-time rendering  
 
 ---
@@ -59,8 +59,9 @@ Demo includes:
 
 - Fast WebGL volume ray marching  
 - Intuitive 3D rotation  
-- Slice inspection mode  
-- Transfer function presets  
+- Slice inspection mode
+- Simple measurement
+- Automatic downscaling and streaming of large volumes
 - Designed for subtle grayscale inspection  
 - Runs on standard laptop GPUs  
 - Fully in-browser execution  
@@ -89,3 +90,33 @@ It is not intended to replace full CT analysis platforms.
 ## Architecture
 
 - WebGL-based volume ray marching
+
+---
+
+## Automated Load-Time Benchmark
+
+You can benchmark load performance automatically by driving the viewer with Playwright and collecting the existing `[LoadTiming]` logs.
+
+### 1. Install benchmark dependency
+
+```bash
+npm install --save-dev playwright
+npx playwright install chromium
+```
+
+### 2. Run benchmark for one dataset
+
+```bash
+node tools/benchmark-load-times.mjs --runs 5 --warmup 1 --csv tools/load-timing-results.csv -- "D:/3D data/BGA/perfekt.raw" "D:/3D data/BGA/perfekt.raw.volumeinfo"
+```
+
+### 3. Run benchmark from manifest (multiple datasets)
+
+```bash
+node tools/benchmark-load-times.mjs --manifest tools/benchmark-manifest.example.json --runs 3 --warmup 1
+```
+
+Outputs:
+
+- JSON summary: `tools/load-timing-results.json`
+- Optional CSV (if `--csv` is provided)

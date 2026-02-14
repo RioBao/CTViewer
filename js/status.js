@@ -98,12 +98,12 @@ class ViewerStatus {
         }
 
         if (state.isStreaming) {
-            return 'Streaming preview';
+            return state.hasFullData ? 'Streaming mode' : 'Low-res preview';
         }
 
         if (!state.hasFullData) {
             if (loading || state.lowResVolume) {
-                return 'Preview mode';
+                return 'Low-res preview';
             }
             return 'Loading';
         }
@@ -169,6 +169,10 @@ class ViewerStatus {
         const summary = (dims !== '--' && dtype !== '--') ? `${dims} (${dtype})` : (dims !== '--' ? dims : dtype);
         pushRow('Volume', summary);
         pushRow('Status', this.getVolumeStatusSummary(false));
+        const orientationRows = this.getOrientationDetailRows(state, viewer);
+        for (const row of orientationRows) {
+            pushRow(row.label, row.value);
+        }
 
         const selected3D = this.getSelected3DResolutionLabel();
         const renderSummary = (selected3D !== '--' && active3DProfile !== '--')
@@ -199,6 +203,49 @@ class ViewerStatus {
         }
 
         return rows;
+    }
+
+    getOrientationDetailRows(state, viewer) {
+        const info = this.resolveOrientationInfo(state, viewer);
+        if (!info) return [];
+
+        const perm = Array.isArray(info.permutation) ? info.permutation.slice(0, 3) : [0, 1, 2];
+        const signs = Array.isArray(info.signs) ? info.signs.slice(0, 3) : [1, 1, 1];
+        const displaySigns = Array.isArray(info.displaySigns) ? info.displaySigns.slice(0, 3) : [1, 1, 1];
+        const modality = (typeof info.modality === 'string' && info.modality)
+            ? info.modality.toUpperCase()
+            : 'Volume';
+        const source = (typeof info.source === 'string' && info.source) ? info.source : 'unknown';
+        const sourceLabel = source === 'none' ? 'header missing' : source;
+        const signLabel = signs.map((v) => (v >= 0 ? '+' : '-')).join(',');
+        const displayLabel = displaySigns.map((v) => (v >= 0 ? '+' : '-')).join(',');
+        const appliedLabel = info.applied ? 'applied' : 'not needed';
+        const permApplied = info.permutationApplied !== false;
+        const permNote = permApplied ? '' : ' | perm not applied';
+
+        return [
+            { label: 'Orientation', value: `${modality} ${sourceLabel} (${appliedLabel})` },
+            { label: 'Axis map', value: `out[x,y,z] <- in[${perm.join(',')}] | flips [${signLabel}]${permNote}` },
+            { label: 'Display conv', value: `viewer signs [${displayLabel}]` }
+        ];
+    }
+
+    resolveOrientationInfo(state, viewer) {
+        if (state && state.orientationInfo && typeof state.orientationInfo === 'object') {
+            return state.orientationInfo;
+        }
+
+        const volumeData = viewer && viewer.ctViewer ? viewer.ctViewer.volumeData : null;
+        if (volumeData && volumeData.metadata && volumeData.metadata.niftiOrientation) {
+            return volumeData.metadata.niftiOrientation;
+        }
+
+        const progressive = viewer && viewer.ctViewer ? viewer.ctViewer.progressiveVolume : null;
+        if (progressive && progressive.metadata && progressive.metadata.niftiOrientation) {
+            return progressive.metadata.niftiOrientation;
+        }
+
+        return null;
     }
 
     getSelected3DResolutionLabel() {

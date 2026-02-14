@@ -1,0 +1,57 @@
+﻿{
+    "generatedAt":  "2026-02-14T12:48:49.3496463+01:00",
+    "notes":  [
+                  "Means are final load times in seconds from warmup=1, runs=5.",
+                  "Dataset paths: RAW=D:/3D data/BGA/perfekt.raw + perfekt.raw.volumeinfo, TIFF=D:/3D data/50kv.tif, NIfTI=D:/3D data/iguana.nii/iguana.nii."
+              ],
+    "variants":  [
+                     {
+                         "id":  "baseline",
+                         "description":  "Pre-optimization baseline",
+                         "rawMeanSec":  3.852,
+                         "tiffMeanSec":  6.356,
+                         "niftiMeanSec":  5.1,
+                         "sources":  [
+                                         "tools/load-timing-results-raw.json",
+                                         "tools/load-timing-results-tiff.json",
+                                         "tools/load-timing-results-nifti.json"
+                                     ]
+                     },
+                     {
+                         "id":  "idea_a_histogram_defer_staged",
+                         "description":  "Histogram sampling + deferred histogram + staged initial slice rendering",
+                         "rawMeanSec":  5.068,
+                         "tiffMeanSec":  6.458,
+                         "niftiMeanSec":  4.622,
+                         "sources":  [
+                                         "tools/load-timing-results-raw-opt.json",
+                                         "tools/load-timing-results-tiff-opt.json",
+                                         "tools/load-timing-results-nifti-opt.json"
+                                     ]
+                     },
+                     {
+                         "id":  "idea_b_delay_auto_mid",
+                         "description":  "Delay auto low-\u003emid 3D upgrade to idle",
+                         "rawMeanSec":  6.228,
+                         "tiffMeanSec":  6.924,
+                         "niftiMeanSec":  5.256,
+                         "sources":  [
+                                         "tools/load-timing-results-raw-opt3.json",
+                                         "tools/load-timing-results-tiff-opt3.json",
+                                         "tools/load-timing-results-nifti-opt3.json"
+                                     ]
+                     },
+                     {
+                         "id":  "idea_c_nifti_threshold_96mb",
+                         "description":  "Raise effective NIfTI progressive threshold to 96MB (isolated measurement)",
+                         "rawMeanSec":  3.852,
+                         "tiffMeanSec":  6.356,
+                         "niftiMeanSec":  5.006,
+                         "sources":  [
+                                         "tools/load-timing-results-raw.json",
+                                         "tools/load-timing-results-tiff.json",
+                                         "tools/load-timing-results-nifti-threshold96.json"
+                                     ]
+                     }
+                 ]
+}

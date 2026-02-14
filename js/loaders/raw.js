@@ -3,8 +3,31 @@ class RawVolumeLoader {
         this.viewer = viewer;
     }
 
+    nowMs() {
+        return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+    }
+
+    formatSeconds(ms) {
+        return `${(ms / 1000).toFixed(2)}s`;
+    }
+
+    logPreviewReady(name, startMs, details = '') {
+        const elapsed = this.nowMs() - startMs;
+        const suffix = details ? ` (${details})` : '';
+        console.log(`[LoadTiming][RAW] Preview ready for "${name}" in ${this.formatSeconds(elapsed)}${suffix}`);
+    }
+
+    logFinalReady(name, startMs, details = '') {
+        const elapsed = this.nowMs() - startMs;
+        const suffix = details ? ` (${details})` : '';
+        console.log(`[LoadTiming][RAW] Final ready for "${name}" in ${this.formatSeconds(elapsed)}${suffix}`);
+    }
+
     async load(fileGroup) {
         const viewer = this.viewer;
+        const loadStartMs = this.nowMs();
         try {
             viewer.reset3DResolutionCache();
             viewer.resetVolumeState();
@@ -21,9 +44,9 @@ class RawVolumeLoader {
             const useProgressive = fileGroup.rawFile.size > PROGRESSIVE_THRESHOLD;
 
             if (useProgressive) {
-                await this.loadProgressive(fileGroup, sourceBytes);
+                await this.loadProgressive(fileGroup, sourceBytes, loadStartMs);
             } else {
-                await this.loadDirect(fileGroup, sourceBytes);
+                await this.loadDirect(fileGroup, sourceBytes, loadStartMs);
             }
 
         } catch (error) {
@@ -32,8 +55,9 @@ class RawVolumeLoader {
         }
     }
 
-    async loadDirect(fileGroup, sourceBytes = null) {
+    async loadDirect(fileGroup, sourceBytes = null, loadStartMs = null) {
         const viewer = this.viewer;
+        const startMs = Number.isFinite(loadStartMs) ? loadStartMs : this.nowMs();
         const volumeData = await viewer.fileParser.load3DVolume(
             fileGroup.rawFile,
             fileGroup.jsonFile,
@@ -61,6 +85,9 @@ class RawVolumeLoader {
                 : null
         });
         viewer.update3DResolutionOptions('full');
+        viewer.applySmart3DResolutionDefault().catch((error) => {
+            console.warn('Auto 3D resolution selection failed:', error);
+        });
 
         if (viewer.histogram) {
             viewer.histogram.setVolume(volumeData);
@@ -71,13 +98,15 @@ class RawVolumeLoader {
             dimensions: info.dimensions,
             label: info.dataType
         });
+        this.logFinalReady(fileGroup.name, startMs, 'direct');
 
         viewer.status.hideLoadingIndicator();
     }
 
-    async loadProgressive(fileGroup, sourceBytes = null) {
+    async loadProgressive(fileGroup, sourceBytes = null, loadStartMs = null) {
         const viewer = this.viewer;
         console.log('Using progressive loading for large volume');
+        const startMs = Number.isFinite(loadStartMs) ? loadStartMs : this.nowMs();
 
         viewer.switchToCTMode();
 
@@ -152,6 +181,7 @@ class RawVolumeLoader {
                 viewer.status.hideLoadingIndicator();
 
                 viewer.ctViewer.handleLowResReady(lowResVolume);
+                this.logPreviewReady(fileGroup.name, startMs, `low=${lowResVolume.dimensions.join('x')}`);
             },
             onBlockReady: (blockIndex, zStart, zEnd) => {
                 viewer.ctViewer.handleBlockReady(blockIndex, zStart, zEnd);
@@ -218,6 +248,10 @@ class RawVolumeLoader {
                 viewer.ctViewer.handleAllBlocksReady();
 
                 viewer.update3DResolutionOptions();
+                viewer.applySmart3DResolutionDefault().catch((error) => {
+                    console.warn('Auto 3D resolution selection failed:', error);
+                });
+                this.logFinalReady(fileGroup.name, startMs, `full=${progressiveData.dimensions.join('x')}`);
 
                 console.log('Progressive loading complete');
             }

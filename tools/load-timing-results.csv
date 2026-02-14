@@ -1,0 +1,6 @@
+"dataset","run","format","name","preview_seconds","final_seconds","final_details"
+"CT_Abdo.nii","1","NIfTI","CT_Abdo.nii","","0.96","direct"
+"CT_Abdo.nii","2","NIfTI","CT_Abdo.nii","","0.96","direct"
+"CT_Abdo.nii","3","NIfTI","CT_Abdo.nii","","0.98","direct"
+"CT_Abdo.nii","4","NIfTI","CT_Abdo.nii","","0.94","direct"
+"CT_Abdo.nii","5","NIfTI","CT_Abdo.nii","","0.93","direct"
