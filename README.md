@@ -63,7 +63,7 @@ This viewer prioritizes:
 - Immediate usability  
 - Minimal friction  
 
-Streaming of large volumes - XY almost instant, YZ and XZ dynamic from the middle out 
+Streaming of large volumes - XY almost instant, YZ and XZ dynamic from the middle out (click image if gif doesn't move)
 ![BookGif](https://github.com/user-attachments/assets/6c99dbfb-52c0-4944-8c50-ca3f11a7ba8b)
 
 
