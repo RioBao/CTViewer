@@ -63,9 +63,8 @@ This viewer prioritizes:
 - Immediate usability  
 - Minimal friction  
 
-Streaming of large volumes - XY almost instant, YZ and XZ dynamic from the middle out (click image if gif doesn't move)
-![BookGif](https://github.com/user-attachments/assets/6c99dbfb-52c0-4944-8c50-ca3f11a7ba8b)
-
+![BookGifInf](https://github.com/user-attachments/assets/5b125d15-fb49-4b37-b0b5-9b1705785595)
+(Data from "Browsing through sealed historical manuscripts by using 3-D computed tomography with low-brilliance X-ray sources", Nature Scientific Reports 2018)
 
 ---
 
