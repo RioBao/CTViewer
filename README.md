@@ -63,6 +63,7 @@ This viewer prioritizes:
 - Immediate usability  
 - Minimal friction  
 
+Almost instant streaming in XY, fast streaming from the middle and out in YZ and XZ
 ![BookGifInf](https://github.com/user-attachments/assets/5b125d15-fb49-4b37-b0b5-9b1705785595)
 (Data from "Browsing through sealed historical manuscripts by using 3-D computed tomography with low-brilliance X-ray sources", Nature Scientific Reports 2018)
 
