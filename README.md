@@ -3,9 +3,8 @@
 Zero-install, browser-based 3D volume inspection for industrial CT data.
 
 **Open. Inspect. Decide.**
-
-TBD 
-![Quick Demo](./assets/quick-demo.gif)
+ 
+![DemoVidShort](https://github.com/user-attachments/assets/18f7fbf9-836d-4ec0-9f84-f437f16aab7e)
 
 ---
 
@@ -41,17 +40,17 @@ A lightweight WebGL-based 3D volume renderer that runs entirely in the browser.
 Built specifically for **industrial inspection workflows**.
 
 ---
-
 ## 🎬 30-Second Inspection Demo
 
-TBP
+![DemoVid](https://github.com/user-attachments/assets/3f20465c-3e59-43af-abb2-9c9fe44ff94a)
 
 Demo includes:
 
-- Opening a volume  
-- Smooth orbit interaction  
-- Slice inspection mode  
-- Stable real-time rendering  
+- Opening a volume
+- Contrast adjustment
+- Easy measurement
+- Stable real-time rendering
+- 
 
 ---
 
