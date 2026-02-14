@@ -8,6 +8,11 @@
   "theme_color": "#0f1115",
   "icons": [
     {
+      "src": "icon/dock-logo4.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    },
+    {
       "src": "icon/dock-logo4.png",
       "sizes": "628x595",
       "type": "image/png"
