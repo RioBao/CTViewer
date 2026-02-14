@@ -120,6 +120,59 @@ class VolumeRenderer3D {
     }
 
     /**
+     * Ensure we have a valid 2D target for CPU rendering.
+     * If the original canvas already has a WebGL context, create a 2D overlay.
+     */
+    ensureCPURenderSurface() {
+        if (this.ctx) {
+            return true;
+        }
+
+        // Works when the canvas was never used for WebGL.
+        const directCtx = this.canvas.getContext('2d');
+        if (directCtx) {
+            this.ctx = directCtx;
+            return true;
+        }
+
+        // If WebGL already claimed this canvas, render CPU output to an overlay.
+        if (!this.cpuCanvas) {
+            const parent = this.canvas.parentElement;
+            if (!parent) {
+                return false;
+            }
+
+            const parentStyle = window.getComputedStyle(parent);
+            if (parentStyle.position === 'static') {
+                parent.style.position = 'relative';
+            }
+
+            const overlay = document.createElement('canvas');
+            overlay.className = 'cpu-fallback-canvas';
+            overlay.style.position = 'absolute';
+            overlay.style.inset = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.zIndex = '2';
+            parent.appendChild(overlay);
+
+            this.cpuCanvas = overlay;
+
+            // Keep original canvas for event handling while hiding failed WebGL output.
+            this.canvas.style.opacity = '0';
+        }
+
+        const overlayCtx = this.cpuCanvas.getContext('2d');
+        if (!overlayCtx) {
+            return false;
+        }
+
+        this.ctx = overlayCtx;
+        return true;
+    }
+
+    /**
      * Set up WebGL context lost/restored handlers
      */
     setupContextLostHandlers() {
@@ -182,11 +235,22 @@ class VolumeRenderer3D {
             newSize = Math.min(Math.floor(size * dpr), maxSize);
         }
 
-        // Only update if size actually changed - avoids GPU texture reallocation
-        if (newSize !== this.displaySize) {
+        const sizeChanged = newSize !== this.displaySize;
+        if (sizeChanged) {
             this.displaySize = newSize;
+        }
+
+        // Keep base canvas sized for WebGL and input mapping.
+        if (sizeChanged || this.canvas.width !== this.displaySize || this.canvas.height !== this.displaySize) {
             this.canvas.width = this.displaySize;
             this.canvas.height = this.displaySize;
+        }
+
+        // Keep CPU overlay in sync when present.
+        if (this.cpuCanvas &&
+            (sizeChanged || this.cpuCanvas.width !== this.displaySize || this.cpuCanvas.height !== this.displaySize)) {
+            this.cpuCanvas.width = this.displaySize;
+            this.cpuCanvas.height = this.displaySize;
         }
     }
 
@@ -272,9 +336,12 @@ class VolumeRenderer3D {
      */
     fallbackToCPU(volumeData) {
         this.useWebGL = false;
-        this.ctx = this.canvas.getContext('2d');
         this.raycaster = new MIPRaycaster();
         this.initRenderBuffers();
+        const hasSurface = this.ensureCPURenderSurface();
+        if (!hasSurface) {
+            console.error('CPU fallback unavailable: failed to acquire a 2D render surface.');
+        }
         if (volumeData) {
             this.raycaster.setVolume(volumeData);
         }
@@ -287,7 +354,11 @@ class VolumeRenderer3D {
 
         // Dispatch event for UI
         document.dispatchEvent(new CustomEvent('rendererfallback', {
-            detail: { reason: 'WebGL failed, using CPU rendering' }
+            detail: {
+                reason: hasSurface
+                    ? 'WebGL failed, using CPU rendering'
+                    : 'WebGL failed and CPU fallback surface is unavailable'
+            }
         }));
     }
 
@@ -303,6 +374,9 @@ class VolumeRenderer3D {
             gl.clearColor(10 / 255, 13 / 255, 19 / 255, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
         } else {
+            if (!this.ensureCPURenderSurface()) {
+                return;
+            }
             this.ctx.fillStyle = '#0A0D13';
             this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
         }
@@ -384,6 +458,11 @@ class VolumeRenderer3D {
      */
     renderCPU() {
         try {
+            if (!this.ensureCPURenderSurface()) {
+                console.error('CPU render skipped: no 2D rendering context is available.');
+                return;
+            }
+
             // Only resize offscreen canvas when resolution changes
             if (this.offscreenWidth !== this.renderResolution ||
                 this.offscreenHeight !== this.renderResolution) {
@@ -428,11 +507,13 @@ class VolumeRenderer3D {
             console.error('CPU render error (possible GPU issue with canvas):', e);
             // Try to show error message
             try {
-                this.ctx.fillStyle = '#333';
-                this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
-                this.ctx.fillStyle = '#f00';
-                this.ctx.font = '14px sans-serif';
-                this.ctx.fillText('Render error', 10, 30);
+                if (this.ctx) {
+                    this.ctx.fillStyle = '#333';
+                    this.ctx.fillRect(0, 0, this.displaySize, this.displaySize);
+                    this.ctx.fillStyle = '#f00';
+                    this.ctx.font = '14px sans-serif';
+                    this.ctx.fillText('Render error', 10, 30);
+                }
             } catch (e2) { /* ignore */ }
         }
     }
@@ -912,6 +993,14 @@ class VolumeRenderer3D {
             this.offscreenCanvas.height = 1;
             this.offscreenCanvas = null;
             this.offscreenCtx = null;
+        }
+
+        if (this.cpuCanvas) {
+            if (this.cpuCanvas.parentElement) {
+                this.cpuCanvas.parentElement.removeChild(this.cpuCanvas);
+            }
+            this.cpuCanvas = null;
+            this.canvas.style.opacity = '';
         }
 
         this.imageData = null;
