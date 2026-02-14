@@ -1,0 +1,16 @@
+{
+  "name": "VXL View",
+  "short_name": "VXL View",
+  "description": "A lightweight browser volume viewer for CT datasets.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "icons": [
+    {
+      "src": "icon/dock-logo4.png",
+      "sizes": "628x595",
+      "type": "image/png"
+    }
+  ]
+}
