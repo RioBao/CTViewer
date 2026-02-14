@@ -1,18 +1,11 @@
 # ⚡ VXL View - Instant Industrial CT Viewer
 
-Zero-install, browser-based 3D volume inspection for industrial CT data.
+Zero-install, browser-based 3D volume viewer.
 
 **Open. Inspect. Decide.**
 
  ## 🎬 30-Second Inspection Demo
-
-Demo includes:
-
-- Opening a volume
-- Contrast adjustment
-- Easy measurement
-- Stable real-time rendering
-- 
+ 
 ![DemoVid](https://github.com/user-attachments/assets/3f20465c-3e59-43af-abb2-9c9fe44ff94a)
 
 (Demo dataset courtesy of https://www.nitrc.org/projects/mricrogl)
@@ -89,31 +82,3 @@ It is not intended to replace full CT analysis platforms.
 - WebGL-based volume ray marching
 
 ---
-
-## Automated Load-Time Benchmark
-
-You can benchmark load performance automatically by driving the viewer with Playwright and collecting the existing `[LoadTiming]` logs.
-
-### 1. Install benchmark dependency
-
-```bash
-npm install --save-dev playwright
-npx playwright install chromium
-```
-
-### 2. Run benchmark for one dataset
-
-```bash
-node tools/benchmark-load-times.mjs --runs 5 --warmup 1 --csv tools/load-timing-results.csv -- "D:/3D data/BGA/perfekt.raw" "D:/3D data/BGA/perfekt.raw.volumeinfo"
-```
-
-### 3. Run benchmark from manifest (multiple datasets)
-
-```bash
-node tools/benchmark-load-times.mjs --manifest tools/benchmark-manifest.example.json --runs 3 --warmup 1
-```
-
-Outputs:
-
-- JSON summary: `tools/load-timing-results.json`
-- Optional CSV (if `--csv` is provided)
