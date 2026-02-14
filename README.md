@@ -48,11 +48,11 @@ Built specifically for **industrial inspection workflows**.
 
 ## Features
 
-- Fast WebGL volume ray marching  
+- Automatic downscaling and streaming of large volumes  
 - Intuitive 3D rotation  
 - Slice inspection mode
 - Simple measurement
-- Automatic downscaling and streaming of large volumes
+- Fast WebGL volume ray marching
 - Designed for subtle grayscale inspection  
 - Runs on standard laptop GPUs  
 - Fully in-browser execution  
@@ -62,6 +62,10 @@ This viewer prioritizes:
 - Fast startup  
 - Immediate usability  
 - Minimal friction  
+
+Streaming of large volumes - XY almost instant, YZ and XZ dynamic from the middle out 
+![BookGif](https://github.com/user-attachments/assets/6c99dbfb-52c0-4944-8c50-ca3f11a7ba8b)
+
 
 ---
 
