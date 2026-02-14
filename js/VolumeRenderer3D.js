@@ -138,6 +138,8 @@ class VolumeRenderer3D {
                 this.webglRenderer = new WebGLMIPRenderer(this.canvas, this.gl);
                 if (this.volumeData) {
                     this.webglRenderer.uploadVolume(this.volumeData);
+                    const preset = this.qualityPresets[this.currentQuality] || this.qualityPresets.medium;
+                    this.webglRenderer.setQuality(preset.numSteps, preset.stepSize, this.currentQuality);
                 }
                 this.render();
             }
@@ -260,8 +262,8 @@ class VolumeRenderer3D {
             this.pan = { x: 0, y: 0 };
             this.syncQuatFromCamera();
 
-            // Initial render at medium quality
-            this.renderAtQuality('medium');
+            // Initial render at the currently selected quality
+            this.renderAtQuality(this.currentQuality);
         }
     }
 
@@ -329,7 +331,7 @@ class VolumeRenderer3D {
         this.renderResolution = preset.resolution;
 
         if (this.useWebGL) {
-            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize);
+            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize, quality);
         } else {
             this.settings.stepSize = preset.stepSize;
         }
@@ -758,7 +760,7 @@ class VolumeRenderer3D {
         this.renderResolution = preset.resolution;
 
         if (this.useWebGL) {
-            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize);
+            this.webglRenderer.setQuality(preset.numSteps, preset.stepSize, this.interactionQuality);
         } else {
             this.settings.stepSize = preset.stepSize;
         }

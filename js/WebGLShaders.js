@@ -34,6 +34,7 @@ precision highp sampler3D;
 
 // Volume texture (normalized to [0,1])
 uniform sampler3D uVolume;
+uniform sampler3D uOccupancy;
 
 // Camera parameters
 uniform float uAzimuth;      // Horizontal rotation (radians)
@@ -50,6 +51,11 @@ uniform float uDisplayMin;   // Window low (normalized)
 uniform float uDisplayMax;   // Window high (normalized)
 uniform float uGamma;        // Gamma correction
 uniform float uEnableLowResAA; // 1.0 = enable lightweight 8-tap smoothing
+uniform float uEnableEmptySpaceSkipping; // 1.0 = use occupancy-guided skipping
+uniform float uUseAdvancedRayMarch; // 1.0 = advanced high-quality march path
+uniform vec3 uOccupancyDims; // occupancy texture dimensions (brick grid)
+uniform float uSkipThreshold; // skip brick if max <= threshold
+uniform float uSkipEpsilon;   // tiny nudge to avoid boundary stalls
 
 // Ray marching parameters
 uniform float uStepSize;     // Step size in normalized coordinates
@@ -70,6 +76,39 @@ float sampleVolume8Tap(vec3 texCoord, vec3 texelSize) {
     sum += texture(uVolume, texCoord + vec3( o.x,  o.y, -o.z)).r;
     sum += texture(uVolume, texCoord + vec3( o.x,  o.y,  o.z)).r;
     return sum * 0.125;
+}
+
+float computeSkipDistance(vec3 texCoord, vec3 rayDirTex, vec3 occDims) {
+    vec3 occCoord = floor(texCoord * occDims);
+    vec3 cellMin = occCoord / occDims;
+    vec3 cellMax = (occCoord + vec3(1.0)) / occDims;
+
+    float tx = 1e9;
+    float ty = 1e9;
+    float tz = 1e9;
+
+    if (rayDirTex.x > 1e-6) {
+        tx = (cellMax.x - texCoord.x) / rayDirTex.x;
+    } else if (rayDirTex.x < -1e-6) {
+        tx = (cellMin.x - texCoord.x) / rayDirTex.x;
+    }
+
+    if (rayDirTex.y > 1e-6) {
+        ty = (cellMax.y - texCoord.y) / rayDirTex.y;
+    } else if (rayDirTex.y < -1e-6) {
+        ty = (cellMin.y - texCoord.y) / rayDirTex.y;
+    }
+
+    if (rayDirTex.z > 1e-6) {
+        tz = (cellMax.z - texCoord.z) / rayDirTex.z;
+    } else if (rayDirTex.z < -1e-6) {
+        tz = (cellMin.z - texCoord.z) / rayDirTex.z;
+    }
+
+    if (tx <= 0.0) tx = 1e9;
+    if (ty <= 0.0) ty = 1e9;
+    if (tz <= 0.0) tz = 1e9;
+    return min(tx, min(ty, tz));
 }
 
 void main() {
@@ -119,7 +158,7 @@ void main() {
 
     // Calculate aspect ratio (normalize so largest dimension = 1)
     float maxDim = max(max(uDimensions.x, uDimensions.y), uDimensions.z);
-    vec3 volSize = uDimensions / maxDim;  // e.g., [1.0, 0.89, 0.22] for 807x719x178
+    vec3 volSize = uDimensions / maxDim;  // e.g., [1.0, 0.89, 0.22]
 
     // Work in aspect-corrected space where volume is volSize, centered at origin
     // Ray origin: start behind the volume
@@ -138,41 +177,103 @@ void main() {
     // Display range for windowing
     float displayRange = uDisplayMax - uDisplayMin;
 
-    // Opacity-weighted MIP
     float maxValue = 0.0;
-    vec3 pos = rayOrigin;
 
-    for (int i = 0; i < uNumSteps; i++) {
-        // Check if inside volume bounds
-        if (all(greaterThanEqual(pos, volMin)) && all(lessThan(pos, volMax))) {
-            // Convert to texture coordinates [0, 1]
-            vec3 texCoord = (pos - volMin) / volSize;
-            float value;
-            if (uEnableLowResAA > 0.5) {
-                value = sampleVolume8Tap(texCoord, texelSize);
-            } else {
-                value = texture(uVolume, texCoord).r;
+    // Low/medium quality: original march path for visual stability.
+    if (uUseAdvancedRayMarch < 0.5) {
+        vec3 pos = rayOrigin;
+        for (int i = 0; i < 16384; i++) {
+            if (i >= uNumSteps) break;
+            if (all(greaterThanEqual(pos, volMin)) && all(lessThan(pos, volMax))) {
+                vec3 texCoord = (pos - volMin) / volSize;
+                float value;
+                if (uEnableLowResAA > 0.5) {
+                    value = sampleVolume8Tap(texCoord, texelSize);
+                } else {
+                    value = texture(uVolume, texCoord).r;
+                }
+
+                float normalized;
+                if (value <= uDisplayMin || displayRange <= 0.0) {
+                    normalized = 0.0;
+                } else if (value >= uDisplayMax) {
+                    normalized = 1.0;
+                } else {
+                    normalized = (value - uDisplayMin) / displayRange;
+                }
+
+                float intensity = pow(normalized, uGamma);
+                maxValue = max(maxValue, intensity * intensity);
+                if (maxValue >= 0.999) break;
             }
+            pos += rayDir * uStepSize;
+        }
+        fragColor = vec4(vec3(maxValue), 1.0);
+        return;
+    }
 
-            // Apply windowing
-            float normalized;
-            if (value <= uDisplayMin || displayRange <= 0.0) {
-                normalized = 0.0;
-            } else if (value >= uDisplayMax) {
-                normalized = 1.0;
-            } else {
-                normalized = (value - uDisplayMin) / displayRange;
+    // High quality: advanced path with bounded intersection and empty-space skipping.
+    vec3 raySign = mix(vec3(-1.0), vec3(1.0), step(vec3(0.0), rayDir));
+    vec3 invRayDir = 1.0 / max(abs(rayDir), vec3(1e-6));
+    vec3 tA = (volMin - rayOrigin) * invRayDir * raySign;
+    vec3 tB = (volMax - rayOrigin) * invRayDir * raySign;
+    vec3 tNear = min(tA, tB);
+    vec3 tFar = max(tA, tB);
+    float tEnter = max(max(tNear.x, tNear.y), tNear.z);
+    float tExit = min(min(tFar.x, tFar.y), tFar.z);
+
+    if (tExit <= max(tEnter, 0.0)) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    float t = max(tEnter, 0.0);
+    vec3 pos = rayOrigin + rayDir * t;
+    vec3 rayDirTex = rayDir / max(volSize, vec3(1e-6));
+    vec3 occDims = max(uOccupancyDims, vec3(1.0));
+
+    for (int i = 0; i < 16384; i++) {
+        if (i >= uNumSteps || t > tExit) break;
+
+        vec3 texCoord = clamp((pos - volMin) / volSize, vec3(0.0), vec3(0.999999));
+        if (uEnableEmptySpaceSkipping > 0.5) {
+            ivec3 occCoord = ivec3(clamp(floor(texCoord * occDims), vec3(0.0), occDims - vec3(1.0)));
+            float occMax = texelFetch(uOccupancy, occCoord, 0).r;
+            if (occMax <= uSkipThreshold) {
+                float skipDist = computeSkipDistance(texCoord, rayDirTex, occDims);
+                float advance = max(skipDist + uSkipEpsilon, uStepSize);
+                t += advance;
+                pos += rayDir * advance;
+                continue;
             }
-
-            // Apply gamma
-            float intensity = pow(normalized, uGamma);
-
-            // Opacity-weighted MIP: use intensity as its own opacity
-            // This creates intensity² response, emphasizing bright values
-            maxValue = max(maxValue, intensity * intensity);
         }
 
+        float value;
+        if (uEnableLowResAA > 0.5) {
+            value = sampleVolume8Tap(texCoord, texelSize);
+        } else {
+            value = texture(uVolume, texCoord).r;
+        }
+
+        // Apply windowing
+        float normalized;
+        if (value <= uDisplayMin || displayRange <= 0.0) {
+            normalized = 0.0;
+        } else if (value >= uDisplayMax) {
+            normalized = 1.0;
+        } else {
+            normalized = (value - uDisplayMin) / displayRange;
+        }
+
+        // Apply gamma
+        float intensity = pow(normalized, uGamma);
+
+        // Opacity-weighted MIP: use intensity as its own opacity.
+        maxValue = max(maxValue, intensity * intensity);
+        if (maxValue >= 0.999) break;
+
         // Move to next position
+        t += uStepSize;
         pos += rayDir * uStepSize;
     }
 
